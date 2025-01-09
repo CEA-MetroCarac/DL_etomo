@@ -2,7 +2,7 @@ This repository contains python functions and jupyter notebooks to perform elect
 
 # Electron tomography reconstruction using supervised and unsupervised approaches
 
-The paper compare some classical approaches (SIRT, CS-TV), supervised approach (U-Net restoration) and unsupervised approach (Deep Image Prior) for the recosntruction and restoration of electron tomgoraphy data. The data sets consist of both experimental Pt nanoparticles acquired in an TEM and simulated data with similar features.
+The paper compare classical approaches (SIRT, CS-TV), supervised approach (U-Net restoration) and unsupervised approach (Deep Image Prior) for the recosntruction and restoration of electron tomgoraphy data. The data sets consist of both experimental Pt nanoparticles acquired in an TEM and simulated data with similar features.
 
 
 Description of the paper (ET reco, comparison, rea data) and data (simu & real data sets described from the article) and methods (sirt, tv regularization, supervised restoration, dip reconstruction)
