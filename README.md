@@ -8,6 +8,9 @@ The paper compare classical approaches (SIRT, CS-TV), supervised approach (U-Net
 Description of the paper (ET reco, comparison, rea data) and data (simu & real data sets described from the article) and methods (sirt, tv regularization, supervised restoration, dip reconstruction)
 Show results examples from the paper
 
+![Example Image](Figs/exp_results.png)
+
+
 ### Dependencies
 
 The notebooks were tested with the following packages and versions : 
