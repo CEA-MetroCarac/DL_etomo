@@ -43,7 +43,7 @@ def dip_reconstruction(NUM_ITER, LR, IMG_SIZE, STD_INP_NOISE, NOISE_REG,
         tv_order : TV order (default 1)
         SHOW_EVERY: display while train every _ iters
         given_input: give a specific input (default None)
-        state: pretrained model dict (weigth & optim state) (defautl None)
+        state: pretrained model dict (weigth & optim state) (default None)
         DISPLAY: display per iter resutls (default True)
 
     Returns:
@@ -54,7 +54,7 @@ def dip_reconstruction(NUM_ITER, LR, IMG_SIZE, STD_INP_NOISE, NOISE_REG,
             list of losses values
             trained network
             used input
-            last avg out (EMA)
+            last average out (EMA)
             best input (from regularisation)
             list of reco per iteration
             model state (weights & optimizer)
@@ -87,10 +87,7 @@ def dip_reconstruction(NUM_ITER, LR, IMG_SIZE, STD_INP_NOISE, NOISE_REG,
     list_iter_reco = []
 
     if DISPLAY:
-        fig, ax = plt.subplots(2, 3, figsize=(14, 7))
-        fig.delaxes(ax[1][0])
-        dh = display.display(fig, display_id=True)
-        ax[0][0].set_yscale('log')
+        dh = None
 
     for it in tqdm(range(NUM_ITER)):
 
@@ -117,42 +114,21 @@ def dip_reconstruction(NUM_ITER, LR, IMG_SIZE, STD_INP_NOISE, NOISE_REG,
         loss_values.append(total_loss.item())
         list_iter_reco.append(simplify(out))
 
-        if DISPLAY:
-            if (it+1)%SHOW_EVERY==0:
-                ax[0][0].cla() 
-                ax[0][0].plot(loss_values, color='blue')
-                ax[0][0].set_yscale('log')
-                ax[0][0].set_title('Training loss')
+        if DISPLAY and ((it+1)%SHOW_EVERY==0 or (it+1)==1):
+            dh = plot_function(dh, [loss_values, 
+                                simplify(out_sino), 
+                                simplify(input_sino), 
+                                simplify(net(net_input)), 
+                                simplify(cmp_reco)])
 
-                ax[0][1].cla() 
-                ax[0][1].imshow(simplify(out_sino), cmap='gray', aspect='auto')
-                ax[0][1].set_title('DIP output sinogram')
-                ax[0][1].axis('off')
-                ax[0][2].cla() 
-                ax[0][2].imshow(simplify(input_sino), cmap='gray', aspect='auto')
-                ax[0][2].set_title('Reference sinogram')
-                ax[0][2].axis('off')
-
-                ax[1][1].cla() 
-                ax[1][1].imshow(simplify(net(net_input)), cmap='gray')
-                ax[1][1].set_title('DIP reconstruction')
-                ax[1][1].axis('off')
-                ax[1][2].cla() 
-                ax[1][2].imshow(simplify(cmp_reco), cmap='gray')
-                ax[1][2].set_title('Reference')
-                ax[1][2].axis('off')
-                dh.update(fig)
-                
         loss_value = total_loss.item()                
         if loss_value < best_loss:
             best_loss = loss_value
             best_i = it
             best_output = simplify(net(net_input))
             best_input = simplify(net_input)
-
+            
         optimizer.step()
-    if DISPLAY:
-        plt.close(fig)
 
     return {
         'best_loss':best_loss, 
@@ -168,10 +144,37 @@ def dip_reconstruction(NUM_ITER, LR, IMG_SIZE, STD_INP_NOISE, NOISE_REG,
     }
 
 
-
-def Plot_function():
+def plot_function(dh, data):
     """
     Plotting function to display a live update of the reconstruction in jupyter notebooks
     """
 
-    return
+    fig, ax = plt.subplots(2, 3, figsize=(14, 7))
+    fig.delaxes(ax[1][0])
+    ax[0][0].set_yscale('log')
+    ax[0][0].plot(data[0], color='blue')
+    ax[0][0].set_yscale('log')
+    ax[0][0].set_title('Training loss')
+
+    ax[0][1].imshow(data[1], cmap='gray', aspect='auto')
+    ax[0][1].set_title('DIP output sinogram')
+    ax[0][1].axis('off')
+    ax[0][2].imshow(data[2], cmap='gray', aspect='auto')
+    ax[0][2].set_title('Reference sinogram')
+    ax[0][2].axis('off')
+
+    ax[1][1].imshow(data[3], cmap='gray')
+    ax[1][1].set_title('DIP reconstruction')
+    ax[1][1].axis('off')
+    ax[1][2].imshow(data[4], cmap='gray')
+    ax[1][2].set_title('Reference')
+    ax[1][2].axis('off')
+
+    if dh is None:
+        dh = display.display(fig, display_id=True)
+    else:
+        display.update_display(fig, display_id=dh.display_id)
+
+    plt.close(fig)
+
+    return dh

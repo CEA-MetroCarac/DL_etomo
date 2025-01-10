@@ -22,6 +22,14 @@ def normalize(x):
         return (x - torch.amin(x)) / (torch.amax(x) - torch.amin(x))
     else :
         return (x - np.amin(x)) / (np.amax(x) - np.amin(x))
+    
+def to8bit(array):
+    """
+    array to 8 bit format
+    """
+    array = simplify(array)
+    array = (normalize(array)*255).astype(np.uint8)
+    return array
 
 def get_torch_grad_op(img_shape, order):
     """
