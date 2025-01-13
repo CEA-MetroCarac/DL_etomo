@@ -21,7 +21,7 @@ dtype = torch.cuda.FloatTensor
 
 def dip_reconstruction(NUM_ITER, LR, IMG_SIZE, STD_INP_NOISE, NOISE_REG,
                        THETA, INPUT_DEPTH, 
-                       input_sino, cmp_reco, net, 
+                       input_sino, degraded_sirt, reference_reco, net, 
                        tv_weight=0.0, tv_order=1, SHOW_EVERY=100, 
                        given_input=None, state=None, DISPLAY=False, DEVICE='cuda'):
     """
@@ -39,7 +39,8 @@ def dip_reconstruction(NUM_ITER, LR, IMG_SIZE, STD_INP_NOISE, NOISE_REG,
         THETA : np.arange of angle values (°)
         INPUT_DEPTH: input noise depth
         input_sino: Input comparison sinogram
-        cmp_reco : reco to compare with output (displayed during training)
+        degraded_sirt: Degraded SIRT reconstruction for comparison (display during training)
+        reference_reco : reco to compare with output (displayed during training)
         net : network
         tv_weight: TV regularization weight (default None)
         tv_order : TV order (default 1)
@@ -125,7 +126,8 @@ def dip_reconstruction(NUM_ITER, LR, IMG_SIZE, STD_INP_NOISE, NOISE_REG,
                                 simplify(out_sino), 
                                 simplify(input_sino), 
                                 simplify(net(net_input)), 
-                                simplify(cmp_reco)])
+                                simplify(degraded_sirt),
+                                simplify(reference_reco)])
 
         loss_value = total_loss.item()                
         if loss_value < best_loss:
@@ -156,24 +158,26 @@ def plot_function(dh, data):
     """
 
     fig, ax = plt.subplots(2, 3, figsize=(14, 7))
-    fig.delaxes(ax[1][0])
     ax[0][0].set_yscale('log')
     ax[0][0].plot(data[0], color='blue')
     ax[0][0].set_yscale('log')
     ax[0][0].set_title('Training loss')
 
     ax[0][1].imshow(data[1], cmap='gray', aspect='auto')
-    ax[0][1].set_title('DIP output sinogram')
+    ax[0][1].set_title('Generated DIP sinogram')
     ax[0][1].axis('off')
     ax[0][2].imshow(data[2], cmap='gray', aspect='auto')
-    ax[0][2].set_title('Reference sinogram')
+    ax[0][2].set_title('Reference sinogram (For loss computation)')
     ax[0][2].axis('off')
 
+    ax[1][0].imshow(data[5], cmap='gray')
+    ax[1][0].set_title('Reference (if exists)')
+
     ax[1][1].imshow(data[3], cmap='gray')
-    ax[1][1].set_title('DIP reconstruction')
+    ax[1][1].set_title('Generated DIP reconstruction')
     ax[1][1].axis('off')
     ax[1][2].imshow(data[4], cmap='gray')
-    ax[1][2].set_title('Reference')
+    ax[1][2].set_title('Degraded SIRT reconstruction')
     ax[1][2].axis('off')
 
     if dh is None:
