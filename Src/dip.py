@@ -1,5 +1,5 @@
 """
-The Deep Image Prior method is taken and adapted from the original DIP work (Ulyanov et al.) :
+The Deep Image Prior method is adapted from the original DIP work (D. Ulyanov et al.) :
     https://github.com/DmitryUlyanov/deep-image-prior/tree/master
 """
 
@@ -25,10 +25,7 @@ def dip_reconstruction(NUM_ITER, LR, IMG_SIZE, STD_INP_NOISE, NOISE_REG,
                        tv_weight=0.0, tv_order=1, SHOW_EVERY=100, 
                        given_input=None, state=None, DISPLAY=False, DEVICE='cuda'):
     """
-    Perform the reconstruction from a 2D sinogram using deep image prior approach
-    The method returns a dictionnary containing :
-        The best loss, output, avergae output, iteration number, optimized network, regularized network input, original network input
-        loss values, reconstructions list along the iterations, network with current training state
+    Perform the reconstruction from a 2D sinogram using the deep image prior approach adapted to tomography
 
     Args:
         NUM_ITER: number of DIP iterations
@@ -36,14 +33,14 @@ def dip_reconstruction(NUM_ITER, LR, IMG_SIZE, STD_INP_NOISE, NOISE_REG,
         IMG_SIZE: output image size (square shape)
         STD_INP_NOISE: input noise std
         NOISE_REG: input noise perturbation per iter
-        THETA : np.arange of angle values (°)
+        THETA: np.arange of angle values (°)
         INPUT_DEPTH: input noise depth
         input_sino: Input comparison sinogram
         degraded_sirt: Degraded SIRT reconstruction for comparison (display during training)
-        reference_reco : reco to compare with output (displayed during training)
-        net : network
+        reference_reco: reco to compare with output (displayed during training)
+        net: network
         tv_weight: TV regularization weight (default None)
-        tv_order : TV order (default 1)
+        tv_order: TV order (default 1)
         SHOW_EVERY: display while train every _ iters
         given_input: give a specific input (default None)
         state: pretrained model dict (weigth & optim state) (default None)
@@ -51,18 +48,18 @@ def dip_reconstruction(NUM_ITER, LR, IMG_SIZE, STD_INP_NOISE, NOISE_REG,
 
     Returns:
         dictionary: 
-            best loss
-            best output
-            best iteration
-            list of losses values
-            trained network
-            used input
-            last average out (EMA)
-            best input (from regularisation)
-            list of reco per iteration
-            model state (weights & optimizer)
+            best_loss: Best loss reached during training
+            best_output: recosntruction corresponding to the best loss
+            best_i: iteration of the best loss
+            loss_values: list of loss values
+            net: Trained network
+            out_avg: average output along the iteration (EMA)
+            best_input: input (after regularization) which gave the best output
+            list_iter_reco: List of generated reconstructions per iterations
+            training_state: network & optimizer state to resume optimization if needed
     """
 
+    # Specify an input noise otherwise use uniform distribution
     if given_input==None:
         net_input = torch.zeros([1, INPUT_DEPTH, IMG_SIZE, IMG_SIZE])
         net_input = (net_input.uniform_() * STD_INP_NOISE).type(dtype)
@@ -71,6 +68,7 @@ def dip_reconstruction(NUM_ITER, LR, IMG_SIZE, STD_INP_NOISE, NOISE_REG,
         net_input = given_input.clone()
         net_input_orig = net_input.clone()
 
+    # Load a pretrained network
     if state != None:
         net.load_state_dict(state['model_state_dict'])
         optimizer.load_state_dict(state['optimizer_state_dict'])
@@ -144,7 +142,6 @@ def dip_reconstruction(NUM_ITER, LR, IMG_SIZE, STD_INP_NOISE, NOISE_REG,
         'best_i':best_i, 
         'loss_values':loss_values, 
         'net':net, 
-        'used_net_input':net_input,
         'out_avg':simplify(out_avg), 
         'best_input':best_input, 
         'list_iter_reco':list_iter_reco, 
