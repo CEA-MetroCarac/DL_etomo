@@ -1,15 +1,16 @@
 This repository contains python functions and jupyter notebooks to perform electron tomography reconstruction and restoration from nanoparticles datasets, as presented in the paper **[]**.
 
-# Electron tomography reconstruction using supervised and unsupervised approaches
+### Electron tomography reconstruction and restoration using supervised and unsupervised approaches
 
-The paper compare classical approaches (SIRT, CS-TV), supervised approach (U-Net restoration) and unsupervised approach (Deep Image Prior) for the recosntruction and restoration of electron tomgoraphy data. The data sets consist of both experimental Pt nanoparticles acquired in an TEM and simulated data with similar features.
+The paper compare classical approaches (SIRT, CS-TV), supervised approach (U-Net restoration) and unsupervised approach (Deep Image Prior) for the reconstruction and restoration of electron tomgoraphy data. The methods are applied on two scenario data sets :
+- One simulated data set containing 2D images of nanoparticles with simulated degraded acquisition conditions,
+- One 3D volume of projections from platinum nanoparticles acquired in a degraded scenario (-60°:2°:+60°).
 
-
-Description of the paper (ET reco, comparison, rea data) and data (simu & real data sets described from the article) and methods (sirt, tv regularization, supervised restoration, dip reconstruction)
-Show results examples from the paper
+The paper compares the different approaches in the context of tomographic reconstruction and restoration and focus in particular on degraded acquisition cases where the number of available projections is limited. The paper highlights the expected superiority of both DL approaches and shows there pros and cons depending of the acquisition scenario.
 
 ![Example Image](Figs/simu_results.png)
 
+The figure show the reconstruction of one zone of interest in the simulated data set with SIRt and both DL approaches in different complex acquisitions scenarios.
 
 ### Dependencies
 
@@ -31,12 +32,9 @@ The notebooks were tested with the following packages and versions :
 
 ## How to use
 
-The source code is presented in ```Src``` directory.
-Several notebooks are presented in ```Notebooks``` :
-- ```/Simulated``` contains supervised U-Net training and DIP reconstruction on the simulated data
-- ```/Experimental``` contains the application of the trained network for real data restoration and the DIP reconstruction
-- ```Compare_results.ipynb``` compare the results in a similar way to the results of the paper.
+The Source functions are available in ```/Src``` and several notebooks to try the function are available in ```/Notebooks```. The notebooks are separated in Experimental and Training data sets. Both ```/Experimental``` and ```/Simulated``` repositories contains a notebook ```/*_supervised_restoration.ipynb``` for the training and restoration of a 2D SIRT reconstruction using a supervised U-Net and a ```/*_dip_reconstruction.ipynb``` notebook for the reconstruction of data from a 2D sinogram.
 
 ###
 
-Data and/or model weights will be available from Zenodo (?) (right now in Data folder)
+Data will be available from Zenodo (?) (Big for Data githbu folder..)
+Already trained models for restoration are available in the ```/Temp_out``` repository.
