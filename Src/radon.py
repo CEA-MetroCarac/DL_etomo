@@ -20,14 +20,14 @@ from tomosipo.torch_support import (
 )
 
 class Radon2D(nn.Module):
-    def __init__(self, size=256, angle=180, device='cuda'):
-        """2D Radon transform with forward and backword operator
+    """2D Radon transform with forward and backword operator
 
-        Args:
-            size (int, optional): image size. Defaults to 256.
-            angle (int, optional): array of angle, in radian. Defaults to 180.
-            device (str, optional): 'cuda' or 'cpu'. Defaults to 'cuda'.
-        """
+    Args:
+        size (int, optional): image size. Defaults to 256.
+        angle (int, optional): array of angle, in radian. Defaults to 180.
+        device (str, optional): 'cuda' or 'cpu'. Defaults to 'cuda'.
+    """
+    def __init__(self, size=256, angle=180, device='cuda'):
         super().__init__()
         self.img_size = size
         self.angle = angle
@@ -91,14 +91,14 @@ class Radon2D(nn.Module):
     
 
 class Radon3D(nn.Module):
-        """3D Radon transform with forward and backword operator
+    """3D Radon transform with forward and backword operator
 
-        Args:
-            size (int, optional): image size. Defaults to 256.
-            angle (int, optional): array of angle, in radian. Defaults to 180.
-            depth (int): depth of the 3D volume
-            device (str, optional): 'cuda' or 'cpu'. Defaults to 'cuda'.
-        """
+    Args:
+        size (int, optional): image size. Defaults to 256.
+        angle (int, optional): array of angle, in radian. Defaults to 180.
+        depth (int): depth of the 3D volume
+        device (str, optional): 'cuda' or 'cpu'. Defaults to 'cuda'.
+    """
     def __init__(self, depth, size=256, angle=np.arange(0.,180.,1.), device='cuda'):
         super().__init__()
         self.img_size = size
