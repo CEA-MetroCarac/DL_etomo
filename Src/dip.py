@@ -19,14 +19,16 @@ from einops import rearrange
 
 dtype = torch.cuda.FloatTensor
 
-
 def dip_reconstruction(NUM_ITER, LR, IMG_SIZE, STD_INP_NOISE, NOISE_REG,
                        THETA, INPUT_DEPTH, 
                        input_sino, cmp_reco, net, 
                        tv_weight=0.0, tv_order=1, SHOW_EVERY=100, 
-                       given_input=None, state=None, DISPLAY=True, DEVICE='cuda'):
+                       given_input=None, state=None, DISPLAY=False, DEVICE='cuda'):
     """
-    Perform DIP reconstruction from a 2D sinogram
+    Perform the reconstruction from a 2D sinogram using deep image prior approach
+    The method returns a dictionnary containing :
+        The best loss, output, avergae output, iteration number, optimized network, regularized network input, original network input
+        loss values, reconstructions list along the iterations, network with current training state
 
     Args:
         NUM_ITER: number of DIP iterations
@@ -94,7 +96,7 @@ def dip_reconstruction(NUM_ITER, LR, IMG_SIZE, STD_INP_NOISE, NOISE_REG,
         for param in net.parameters():
             param.grad = None
 
-        # Noise based regularization
+        # Noise based regularization of the input noise
         if NOISE_REG > 0:
             net_input = net_input_orig + (torch.zeros(net_input.shape).to(DEVICE).normal_() * NOISE_REG)
 
@@ -104,16 +106,20 @@ def dip_reconstruction(NUM_ITER, LR, IMG_SIZE, STD_INP_NOISE, NOISE_REG,
         out_sino = radon_op.forward(out)
         out_sino = rearrange(out_sino, 'h w -> 1 1 h w')
 
+        # Computation of the loss on the sinogram of the generated reconstruction
         total_loss = loss(out_sino, input_sino)
+
+        # Possible use of a TV regularization on the generated reconstruction
         if tv_weight > 0:
             total_loss += tv_weight * compute_sparse_tv(out, grad_operator)
 
         total_loss.backward()
 
-        # Save every iteration
+        # Save iterations reconstructions and loss values
         loss_values.append(total_loss.item())
         list_iter_reco.append(simplify(out))
 
+        # For jupyter notebooks : possible live display of the progress of the reconstruction 
         if DISPLAY and ((it+1)%SHOW_EVERY==0 or (it+1)==1):
             dh = plot_function(dh, [loss_values, 
                                 simplify(out_sino), 
@@ -146,7 +152,7 @@ def dip_reconstruction(NUM_ITER, LR, IMG_SIZE, STD_INP_NOISE, NOISE_REG,
 
 def plot_function(dh, data):
     """
-    Plotting function to display a live update of the reconstruction in jupyter notebooks
+    Plot function for jupyter notebooks to display a live evolution of : the loss and the generated reconstruction and sinogram compared to a reference
     """
 
     fig, ax = plt.subplots(2, 3, figsize=(14, 7))

@@ -1,4 +1,9 @@
 """
+Create a Radon operator class based on Tomosipo Library
+The operator is used to :
+    Generate a sinogram from a 2D or 3D image
+    Compute the reconstruction using FB or SIRT method
+
 The SIRT reconstruction algorithm is taken from Tomosipo official implementation (A. Hendriksen et al.) :
     https://github.com/ahendriksen/tomosipo
 """
@@ -16,7 +21,7 @@ from tomosipo.torch_support import (
 
 class Radon2D(nn.Module):
     def __init__(self, size=256, angle=180, device='cuda'):
-        """Radon transform with forward and backword operator
+        """2D Radon transform with forward and backword operator
 
         Args:
             size (int, optional): image size. Defaults to 256.
@@ -86,7 +91,15 @@ class Radon2D(nn.Module):
     
 
 class Radon3D(nn.Module):
-    def __init__(self, depth, size=576, angle=np.arange(0.,180.,1.), device='cuda'):
+        """3D Radon transform with forward and backword operator
+
+        Args:
+            size (int, optional): image size. Defaults to 256.
+            angle (int, optional): array of angle, in radian. Defaults to 180.
+            depth (int): depth of the 3D volume
+            device (str, optional): 'cuda' or 'cpu'. Defaults to 'cuda'.
+        """
+    def __init__(self, depth, size=256, angle=np.arange(0.,180.,1.), device='cuda'):
         super().__init__()
         self.img_size = size
         self.angle = angle

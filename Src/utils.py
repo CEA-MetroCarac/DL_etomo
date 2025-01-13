@@ -25,7 +25,7 @@ def normalize(x):
     
 def to8bit(array):
     """
-    array to 8 bit format
+    Array to 8 bit format
     """
     array = simplify(array)
     array = (normalize(array)*255).astype(np.uint8)

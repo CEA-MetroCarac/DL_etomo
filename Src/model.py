@@ -1,3 +1,7 @@
+"""
+Unet architecture wiht modifiable parameters : Type of up- and downsampling, number of layers, filters size, use of skip connections
+"""
+
 import torch
 from torch import nn
 
