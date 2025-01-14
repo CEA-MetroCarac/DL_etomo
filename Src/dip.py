@@ -25,36 +25,36 @@ def dip_reconstruction(NUM_ITER, LR, IMG_SIZE, STD_INP_NOISE, NOISE_REG,
                        tv_weight=0.0, tv_order=1, SHOW_EVERY=100,
                        given_input=None, state=None, DISPLAY=False, DEVICE='cuda'):
     """
-    Perform the reconstruction from a 2D sinogram using the deep image prior approach adapted to tomography
+    Perform the reconstruction from a 2D sinogram using the deep image prior approach adapted to tomography.
 
     Args:
         NUM_ITER: number of DIP iterations
         LR: Learning rate
-        IMG_SIZE: output image size (square shape)
-        STD_INP_NOISE: input noise std
-        NOISE_REG: input noise perturbation per iter
-        THETA: np.arange of angle values (°)
+        IMG_SIZE: output image size (assumed to be square shaped)
+        STD_INP_NOISE: Standard-deviation of the input noise
+        NOISE_REG: if > 0, value of the perturbation (regularization) applied to the input noise
+        THETA: array of angular values (in degrees) corresponding to the sinogram to reconstruct
         INPUT_DEPTH: input noise depth
         net: network
-        input_sino: Input comparison sinogram
-        degraded_sirt: Degraded SIRT reconstruction for comparison (display during training)
-        reference_reco: reco to compare with output (displayed during training) (optionnal)
-        tv_weight: TV regularization weight (default None)
+        input_sino: Input sinogram for loss computation
+        degraded_sirt: Degraded SIRT reconstruction for visual comparison (displayed during training)
+        reference_reco: Reference reconstruction for visual comparison (displayed during training) (optionnal)
+        tv_weight: if > 0, apply a TV regularization with this weight (default 0)
         tv_order: TV order (default 1)
-        SHOW_EVERY: display while train every _ iters
-        given_input: give a specific input (default None)
-        state: pretrained model dict (weigth & optim state) (default None)
-        DISPLAY: display per iter resutls (default True)
+        SHOW_EVERY: if DISPLAY==True, Display live update every SHOW_EVERY iterations
+        given_input: custom input (optionnal), if None is given, uniform noise is used
+        state: pretrained model dictionary (weigths & optimizer state) (default None)
+        DISPLAY: for jupyter notebook use, if True, display live per iteration update (default False)
 
     Returns:
         dictionary: 
             best_loss: Best loss reached during training
-            best_output: recosntruction corresponding to the best loss
-            best_i: iteration of the best loss
+            best_output: reconstruction corresponding to the best loss
+            best_i: iteration number of the best loss
             loss_values: list of loss values
             net: Trained network
-            out_avg: average output along the iteration (EMA)
-            best_input: input (after regularization) which gave the best output
+            out_avg: Average output after the complete optimization process (using Exponentioal Moving Average, EMA)
+            best_input: Regularized input which resulted in the best output (with minimal loss)
             list_iter_reco: List of generated reconstructions per iterations
             training_state: network & optimizer state to resume optimization if needed
     """

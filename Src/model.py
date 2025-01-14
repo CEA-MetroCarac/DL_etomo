@@ -1,5 +1,8 @@
 """
-Unet architecture wiht modifiable parameters : Type of up- and downsampling, number of layers, filters size, use of skip connections
+Unet architecture as described in (O. Ronneberger et al.) : 
+    U-net: Convolutional networks for biomedical image segmentation
+
+The architecture has modifiable parameters : Type of up- and downsampling, number of layers, filters size, use of skip connections
 """
 
 import torch

@@ -24,7 +24,10 @@ class Radon2D(nn.Module):
 
     Args:
         size (int, optional): image size. Defaults to 256.
-        angle (int, optional): array of angle, in radian. Defaults to 180.
+        angle (int or array, optional): 
+            if int N: uses an angular range of N values between 0 and π
+            if array: array of the exact angular values to use, in radian.
+            default: 180
         device (str, optional): 'cuda' or 'cpu'. Defaults to 'cuda'.
     """
     def __init__(self, size=256, angle=180, device='cuda'):
@@ -95,7 +98,10 @@ class Radon3D(nn.Module):
 
     Args:
         size (int, optional): image size. Defaults to 256.
-        angle (int, optional): array of angle, in radian. Defaults to 180.
+        angle (int or array, optional): 
+            if int N: uses an angular range of N values between 0 and π
+            if array: array of the exact angular values to use, in radian.
+            default: 180
         depth (int): depth of the 3D volume
         device (str, optional): 'cuda' or 'cpu'. Defaults to 'cuda'.
     """
