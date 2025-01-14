@@ -59,7 +59,7 @@ def dip_reconstruction(NUM_ITER, LR, IMG_SIZE, STD_INP_NOISE, NOISE_REG,
             training_state: network & optimizer state to resume optimization if needed
     """
 
-    # Specify an input noise otherwise use uniform distribution
+    # Specify an input noise, and use an uniform distribution otherwise
     if given_input==None:
         net_input = torch.zeros([1, INPUT_DEPTH, IMG_SIZE, IMG_SIZE])
         net_input = (net_input.uniform_() * STD_INP_NOISE).type(dtype)
@@ -114,7 +114,7 @@ def dip_reconstruction(NUM_ITER, LR, IMG_SIZE, STD_INP_NOISE, NOISE_REG,
 
         total_loss.backward()
 
-        # Save iterations reconstructions and loss values
+        # Save per iteration reconstruction and loss
         loss_values.append(total_loss.item())
         list_iter_reco.append(simplify(out))
 
