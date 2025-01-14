@@ -20,9 +20,9 @@ from einops import rearrange
 dtype = torch.cuda.FloatTensor
 
 def dip_reconstruction(NUM_ITER, LR, IMG_SIZE, STD_INP_NOISE, NOISE_REG,
-                       THETA, INPUT_DEPTH, 
-                       input_sino, degraded_sirt, reference_reco, net, 
-                       tv_weight=0.0, tv_order=1, SHOW_EVERY=100, 
+                       THETA, INPUT_DEPTH, net,
+                       input_sino, degraded_sirt, reference_reco=None,
+                       tv_weight=0.0, tv_order=1, SHOW_EVERY=100,
                        given_input=None, state=None, DISPLAY=False, DEVICE='cuda'):
     """
     Perform the reconstruction from a 2D sinogram using the deep image prior approach adapted to tomography
@@ -35,10 +35,10 @@ def dip_reconstruction(NUM_ITER, LR, IMG_SIZE, STD_INP_NOISE, NOISE_REG,
         NOISE_REG: input noise perturbation per iter
         THETA: np.arange of angle values (°)
         INPUT_DEPTH: input noise depth
+        net: network
         input_sino: Input comparison sinogram
         degraded_sirt: Degraded SIRT reconstruction for comparison (display during training)
-        reference_reco: reco to compare with output (displayed during training)
-        net: network
+        reference_reco: reco to compare with output (displayed during training) (optionnal)
         tv_weight: TV regularization weight (default None)
         tv_order: TV order (default 1)
         SHOW_EVERY: display while train every _ iters
@@ -125,7 +125,7 @@ def dip_reconstruction(NUM_ITER, LR, IMG_SIZE, STD_INP_NOISE, NOISE_REG,
                                 simplify(input_sino), 
                                 simplify(net(net_input)), 
                                 simplify(degraded_sirt),
-                                simplify(reference_reco)])
+                                reference_reco])
 
         loss_value = total_loss.item()                
         if loss_value < best_loss:
@@ -167,8 +167,11 @@ def plot_function(dh, data):
     ax[0][2].set_title('Reference sinogram (For loss computation)')
     ax[0][2].axis('off')
 
-    ax[1][0].imshow(data[5], cmap='gray')
-    ax[1][0].set_title('Reference (if exists)')
+    if data[5] is None:
+        ax[1][0].set_visible(False)
+    else:
+        ax[1][0].imshow(simplify(data[5]), cmap='gray')
+        ax[1][0].set_title('SIRT reference')
 
     ax[1][1].imshow(data[3], cmap='gray')
     ax[1][1].set_title('Generated DIP reconstruction')
