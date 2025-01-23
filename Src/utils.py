@@ -31,6 +31,22 @@ def to8bit(array):
     array = (normalize(array)*255).astype(np.uint8)
     return array
 
+def sinoToFullView(sinogram, angle):
+    """Return a sinogram of size 180, with missing projections visible as empty spaces
+    Args:
+        sinogram: sinogram 2D with missing projections, of shape (nb_projections x img_size)
+        angle: array of corresponding angles (°)
+    """
+
+    sinogram = simplify(sinogram)
+    size = sinogram.shape[1]
+    full = np.zeros((180, size))
+
+    for idx, theta in enumerate(angle):
+        full[theta, :] = sinogram[idx, :]
+
+    return full    
+
 def get_torch_grad_op(img_shape, order):
     """
     From pysap-etomo : https://github.com/CEA-COSMIC/pysap-etomo
@@ -76,7 +92,7 @@ def l1_mssim_loss(gt, pred, alpha=0.5):
         Loss functions for image restoration with neural networks.
     """
 
-    msssim_loss = 1 - ms_ssim(gt, pred, data_range=1, size_average=True )
+    msssim_loss = 1 - ms_ssim(torch.abs(gt), torch.abs(pred), data_range=1, size_average=True )
     l1 = nn.L1Loss()
     l1_loss = l1(gt, pred)
 

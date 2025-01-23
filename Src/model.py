@@ -18,16 +18,19 @@ class DownBlock(nn.Module):
             self.down = nn.AvgPool2d(2)
         elif down_mode=='stride':
             self.down = nn.Conv2d(in_chan, out_chan, kernel_size=3, padding=1, stride=2)
+            # self.down = nn.Conv2d(in_chan, in_chan, kernel_size=3, padding=1, stride=2)
         else:
             assert False, 'unknown downsampling mode'
         
         self.convblock = nn.Sequential(
             self.down,
             nn.BatchNorm2d(out_chan),
+            # nn.BatchNorm2d(in_chan),
             nn.LeakyReLU(),
             nn.Conv2d(out_chan, out_chan, kernel_size=kernel, padding=kernel//2, padding_mode=pad_mode),
+            # nn.Conv2d(in_chan, out_chan, kernel_size=kernel, padding=kernel//2, padding_mode=pad_mode),
             nn.BatchNorm2d(out_chan),
-            nn.LeakyReLU()
+            nn.LeakyReLU(),
         )
     def forward(self, x):
         return self.convblock(x)
@@ -91,6 +94,8 @@ class model_unet(nn.Module):
             self.up_layers.append(
                 UpBlock(down_filters[-1], up_filters[idx], skip_filters[idx], kernel=up_kernels[idx], up_mode=up_mode, pad_mode=pad_mode) if idx==self.depth-1
                 else UpBlock(up_filters[idx+1], up_filters[idx], skip_filters[idx], kernel=up_kernels[idx], up_mode=up_mode, pad_mode=pad_mode)
+                # UpBlock(down_filters[-1], up_filters[idx], [1,16,32,64][idx], kernel=up_kernels[idx], up_mode=up_mode, pad_mode=pad_mode) if idx==self.depth-1
+                # else UpBlock(up_filters[idx+1], up_filters[idx], [1,16,32,64][idx], kernel=up_kernels[idx], up_mode=up_mode, pad_mode=pad_mode)
             )
             if skip_filters[idx]!=0:
                 self.skip_layers.append(
@@ -98,16 +103,22 @@ class model_unet(nn.Module):
                         nn.Conv2d(input_shape, skip_filters[idx], kernel_size=skip_kernels[idx], padding=skip_kernels[idx]//2, padding_mode=pad_mode) if idx==0 
                         else nn.Conv2d(down_filters[idx-1], skip_filters[idx], kernel_size=skip_kernels[idx], padding=skip_kernels[idx]//2, padding_mode=pad_mode),
                         nn.BatchNorm2d(skip_filters[idx]),
-                        nn.LeakyReLU()))
+                        nn.LeakyReLU()
+                        # nn.Identity()
+                        ))
             else:
                 self.skip_layers.append(None)
 
         self.out_conv = nn.Sequential(
-            nn.Conv2d(up_filters[0], 4, kernel_size=3, padding=3//2, padding_mode=pad_mode),
+            nn.Conv2d(up_filters[0], 4, kernel_size=1, padding=0, padding_mode=pad_mode),
+            # nn.Conv2d(up_filters[0], 4, kernel_size=3, padding=3//2, padding_mode=pad_mode),
             nn.BatchNorm2d(4),
             nn.LeakyReLU(),
-            nn.Conv2d(4, output_shape, kernel_size=3, padding=3//2, padding_mode=pad_mode),
+            # nn.ReLU(),
+            # nn.Conv2d(4, output_shape, kernel_size=3, padding=3//2, padding_mode=pad_mode),
+            nn.Conv2d(4, output_shape, kernel_size=1, padding=0, padding_mode=pad_mode),
             nn.LeakyReLU()
+            # nn.ReLU()
         )
 
     def forward(self, x):

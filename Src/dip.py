@@ -78,6 +78,7 @@ def dip_reconstruction(NUM_ITER, LR, IMG_SIZE, STD_INP_NOISE, NOISE_REG,
     loss = torch.nn.MSELoss(reduction='sum').type(dtype)
 
     radon_op = Radon2D(size=IMG_SIZE, angle=np.deg2rad(np.flip(THETA)))
+    radon_op_full = Radon2D(size=IMG_SIZE, angle=np.deg2rad(np.arange(0.,180.,1.)))
     grad_operator = get_torch_grad_op((IMG_SIZE, IMG_SIZE), tv_order).to(DEVICE)
 
     loss_values = []
@@ -121,9 +122,9 @@ def dip_reconstruction(NUM_ITER, LR, IMG_SIZE, STD_INP_NOISE, NOISE_REG,
         # For jupyter notebooks : possible live display of the progress of the reconstruction 
         if DISPLAY and ((it+1)%SHOW_EVERY==0 or (it+1)==1):
             dh = plot_function(dh, [loss_values, 
-                                simplify(out_sino), 
-                                simplify(input_sino), 
-                                simplify(net(net_input)), 
+                                simplify(radon_op_full.forward(out)),
+                                sinoToFullView(input_sino, np.flip(THETA)), 
+                                simplify(out), 
                                 simplify(degraded_sirt),
                                 reference_reco])
 
@@ -160,12 +161,10 @@ def plot_function(dh, data):
     ax[0][0].set_yscale('log')
     ax[0][0].set_title('Training loss')
 
-    ax[0][1].imshow(data[1], cmap='gray', aspect='auto')
+    ax[0][1].imshow(data[1], cmap='gray', aspect='auto', extent=[0, data[3].shape[1], 90, -90])
     ax[0][1].set_title('Generated DIP sinogram')
-    ax[0][1].axis('off')
-    ax[0][2].imshow(data[2], cmap='gray', aspect='auto')
+    ax[0][2].imshow(data[2], cmap='gray', aspect='auto', extent=[0, data[3].shape[1], 90, -90])
     ax[0][2].set_title('Reference sinogram (For loss computation)')
-    ax[0][2].axis('off')
 
     if data[5] is None:
         ax[1][0].set_visible(False)
