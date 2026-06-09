@@ -71,11 +71,11 @@ class Radon2D(nn.Module):
         x_cur = torch.zeros(self.operator.domain_shape, device=self.device, requires_grad=True)
 
         C = to_autograd(self.operator.T)(torch.ones(self.operator.range_shape, device=self.device, requires_grad=True))
-        C[C < ts.epsilon] = np.Inf
+        C[C < ts.epsilon] = np.inf
         C.reciprocal_()
 
         R = to_autograd(self.operator)(torch.ones(self.operator.domain_shape, device=self.device,  requires_grad=True))
-        R[R < ts.epsilon] = np.Inf
+        R[R < ts.epsilon] = np.inf
         R.reciprocal_()
 
         if progress_bar:
@@ -147,11 +147,11 @@ class Radon3D(nn.Module):
         x_cur = torch.zeros(self.operator.domain_shape, device=self.device, requires_grad=True)
 
         C = to_autograd(self.operator.T)(torch.ones(self.operator.range_shape, device=self.device, requires_grad=True))
-        C[C < ts.epsilon] = np.Inf
+        C[C < ts.epsilon] = np.inf
         C.reciprocal_()
 
         R = to_autograd(self.operator)(torch.ones(self.operator.domain_shape, device=self.device,  requires_grad=True))
-        R[R < ts.epsilon] = np.Inf
+        R[R < ts.epsilon] = np.inf
         R.reciprocal_()
 
         if progress_bar:
