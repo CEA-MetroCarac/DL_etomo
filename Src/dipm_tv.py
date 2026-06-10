@@ -246,6 +246,8 @@ def run_dipm_tv(net, rad_op, sino_torch,
                 exp_weight=0.99,
                 lambda_tv=0.0,
                 loss_type='L2',
+                std_inp_noise=1.0,
+                weight_decay=0.01,
                 plot_every=25,
                 plot_slice=0,
                 plot_axis=0,
@@ -268,6 +270,8 @@ def run_dipm_tv(net, rad_op, sino_torch,
     exp_weight : float  EMA weight for averaged output
     lambda_tv : float  TV regularisation strength (0 = no TV)
     loss_type : 'L1' or 'L2'
+    std_inp_noise : float  scale of the fixed uniform input (default 1.0; use 0.1 for EDX)
+    weight_decay : float  AdamW weight decay (default 0.0)
     plot_every : int  refresh live plot every N iterations
     plot_slice : int  index along plot_axis used in the live preview
     plot_axis : int  volume axis to slice for preview (0=D, 1=H, 2=W)
@@ -290,11 +294,12 @@ def run_dipm_tv(net, rad_op, sino_torch,
     else:
         criterion = nn.MSELoss().to(device)
 
-    optimizer = torch.optim.AdamW(net.parameters(), lr=lr)
+    optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=weight_decay)
     scaler = torch.amp.GradScaler(device_type, enabled=use_amp)
 
     # --- Fixed random input noise ---
-    net_input_orig = torch.zeros(1, input_depth, depth, img_size, img_size).uniform_().to(device)
+    net_input_orig = (torch.zeros(1, input_depth, depth, img_size, img_size).uniform_()
+                      * std_inp_noise).to(device)
 
     # --- State ---
     loss_values = []
