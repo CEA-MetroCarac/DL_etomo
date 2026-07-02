@@ -1,220 +1,107 @@
 """
 psd_resolution.py
 =================
-PSD-based resolution estimation for 3D STEM-EDX-EELS tomographic reconstructions.
+PSD-based resolution estimation for 3D tomographic reconstructions.
+
+After ``compute_psd_analysis`` the axis convention is always:
+    dim 0 = kz = physical Z (tilt / missing-wedge axis, fastest PSD decay)
+    dim 1 = ky = physical Y
+    dim 2 = kx = physical X
 
 Public API
 ----------
-reorder_vol_to_zyx            -- reorder volume to (Z, Y, X) physical convention
-make_axis_labels              -- build axis label dict for plots
-compute_psd_analysis          -- compute 3D PSD + 1D profiles
-plot_real_space               -- orthogonal real-space slices
-plot_psd_planes               -- three principal PSD planes
-plot_axis_profiles_1d         -- 1D PSD profiles along kx / ky / kz
-plot_axis_profiles_overlay    -- all three profiles in one panel
-lorentz_psd_C                 -- Lorentzian + pedestal model
-fit_lorentz_cutoff            -- resolution fitting
-plot_lorentz_fit              -- diagnostic plot for one fit
+compute_psd_analysis  -- 3D PSD + auto axis detection + 1D profiles
+plot_real_space       -- orthogonal real-space slices
+plot_psd_planes       -- PSD planes (optional profile-band overlay)
+lorentz_psd_C         -- Lorentzian + pedestal model
+fit_lorentz_cutoff    -- Lorentzian resolution fitting
+plot_lorentz_fit      -- diagnostic plot for one fit
 """
 
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 from scipy.optimize import curve_fit
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Axis mapping
-# ─────────────────────────────────────────────────────────────────────────────
-
-def reorder_vol_to_zyx(vol, axis_map):
-    """
-    Transpose *vol* to physical (Z, Y, X) order.
-
-    Parameters
-    ----------
-    vol : ndarray
-        Input volume with arbitrary axis ordering.
-    axis_map : dict {int -> str}
-        Maps each axis index (0, 1, 2) to its physical label ("X", "Y", or "Z").
-        Z is the tilt / missing-wedge axis.
-
-    Returns
-    -------
-    vol_zyx : ndarray
-        Volume transposed to (Z, Y, X) order.
-    perm : list of int
-        Permutation applied: ``vol_zyx = np.transpose(vol, perm)``.
-    """
-    assert set(axis_map.values()) == {"X", "Y", "Z"}
-    assert set(axis_map.keys())   == {0, 1, 2}
-    perm = [next(k for k,v in axis_map.items() if v == c) for c in "ZYX"]
-    vol_zyx = np.transpose(vol, perm)
-    print(f"[reorder] {perm}: {vol.shape} -> ZYX {vol_zyx.shape}")
-    return vol_zyx, perm
-
-
-def make_axis_labels(units=r"\mathrm{nm}^{-1}"):
-    """
-    Build the axis-label dict used by all plot functions.
-
-    Parameters
-    ----------
-    units : str, optional
-        LaTeX string for the frequency unit; default ``r"\\mathrm{nm}^{-1}"``.
-
-    Returns
-    -------
-    dict
-        Keys: ``kx``, ``ky``, ``kz`` (full axis labels with units),
-        ``kx_title``, ``ky_title``, ``kz_title`` (short panel title strings).
-    """
-    return {
-        "kx":       rf"$k_{{X}}\;({units})$",
-        "ky":       rf"$k_{{Y}}\;({units})$",
-        "kz":       rf"$k_{{Z\,\mathrm{{tilt}}}}\;({units})$",
-        "kx_title": r"$k_X$",
-        "ky_title": r"$k_Y$",
-        "kz_title": r"$k_{Z\,\mathrm{tilt}}$",
-    }
-
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PSD helpers
+# Internal helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _moving_median(x, w):
-    """
-    Edge-padded running median.
-
-    Parameters
-    ----------
-    x : array_like
-        1-D input signal.
-    w : int
-        Window width; forced to the nearest odd integer.
-
-    Returns
-    -------
-    ndarray
-        Smoothed signal, same length as *x*.
-    """
     x = np.asarray(x, float)
-    w = int(w) | 1          # ensure odd
+    w = int(w) | 1
     pad = w // 2
     xp = np.pad(x, pad, mode="edge")
-    return np.array([np.median(xp[i:i+w]) for i in range(len(x))])
+    return np.array([np.median(xp[i:i + w]) for i in range(len(x))])
 
 
 def _norm(a):
-    """
-    Normalise array to [0, 1] using the 1st–99th percentile range.
-
-    Parameters
-    ----------
-    a : ndarray
-        Input array (any shape); non-finite values are ignored for the
-        percentile computation but are propagated in the output.
-
-    Returns
-    -------
-    ndarray
-        Clipped normalised array, same shape as *a*.
-    """
     lo, hi = np.percentile(a[np.isfinite(a)], [1, 99])
     return np.clip((a - lo) / max(hi - lo, 1e-6), 0, 1)
 
 
-def _axis_profile(PSD, axis, band):
+def _axis_profile(PSD, axis, band_k, dkx, dky, dkz):
     """
-    Average a ±band central slab of the 3D PSD along one axis.
+    Extract a 1D PSD profile along *axis* by averaging the central slab
+    (width ±band_k in nm⁻¹) in the two perpendicular directions.
 
-    Parameters
-    ----------
-    PSD : ndarray, shape (Z, Y, X)
-        3D power spectral density array (fftshifted).
-    axis : {"kx", "ky", "kz"}
-        Axis along which to extract the 1-D profile.
-    band : int
-        Half-width (in voxels) of the slab averaged perpendicular to *axis*.
+    PSD shape is (Z, Y, X):  dim0 ↔ kz,  dim1 ↔ ky,  dim2 ↔ kx.
 
-    Returns
-    -------
-    ndarray, shape (N,)
-        Mean 1-D profile along the requested axis.
+    kx profile  →  average over Z-slab (±bz) and Y-slab (±by),  result shape (X,)
+    ky profile  →  average over Z-slab (±bz) and X-slab (±bx),  result shape (Y,)
+    kz profile  →  average over Y-slab (±by) and X-slab (±bx),  result shape (Z,)
     """
     Z, Y, X = PSD.shape
-    z0, y0, x0 = Z//2, Y//2, X//2
-    sl = lambda c, n: slice(max(0, c-band), min(n, c+band+1))
-    if axis == "kx": return PSD[sl(z0,Z), sl(y0,Y), :].mean(axis=(0,1))
-    if axis == "ky": return PSD[sl(z0,Z), :, sl(x0,X)].mean(axis=(0,2))
-    if axis == "kz": return PSD[:, sl(y0,Y), sl(x0,X)].mean(axis=(1,2))
-    raise ValueError(axis)
+    z0, y0, x0 = Z // 2, Y // 2, X // 2
+    bx = max(1, int(np.round(band_k / dkx)))
+    by = max(1, int(np.round(band_k / dky)))
+    bz = max(1, int(np.round(band_k / dkz)))
+
+    if axis == "kx":   # profile along dim2 (X)
+        return PSD[z0 - bz:z0 + bz + 1, y0 - by:y0 + by + 1, :].mean(axis=(0, 1))
+    if axis == "ky":   # profile along dim1 (Y)
+        return PSD[z0 - bz:z0 + bz + 1, :, x0 - bx:x0 + bx + 1].mean(axis=(0, 2))
+    if axis == "kz":   # profile along dim0 (Z / tilt)
+        return PSD[:, y0 - by:y0 + by + 1, x0 - bx:x0 + bx + 1].mean(axis=(1, 2))
+    raise ValueError(f"Unknown axis: {axis!r}")
 
 
 def _quick_cutoff(k, psd, *, tail_frac, smooth_w, tol_factor,
-                  k_min_frac, noise_mode, mad_sigma, counts=None):
-    """
-    Find the resolution cutoff as the first descending crossing of the
-    smoothed PSD with a noise threshold.
-
-    Parameters
-    ----------
-    k : ndarray
-        Spatial-frequency axis (positive half, ascending).
-    psd : ndarray
-        Raw 1-D PSD values corresponding to *k*.
-    tail_frac : float
-        Fraction of the profile (from the high-k end) used to estimate noise.
-    smooth_w : int
-        Running-median window width passed to ``_moving_median``.
-    tol_factor : float
-        Threshold multiplier applied to the noise estimate.
-    k_min_frac : float
-        Low-frequency guard: crossings below ``k_min_frac * k[-1]`` are ignored.
-    noise_mode : {"p80", "mad"}
-        Noise estimator: 80th percentile of the tail, or median + MAD.
-    mad_sigma : float
-        MAD multiplier (used only when ``noise_mode="mad"``).
-    counts : array_like or None, optional
-        If provided, positions where counts ≤ 0 are excluded from the noise tail.
-
-    Returns
-    -------
-    kc : float
-        Cutoff frequency (nm⁻¹); ``np.nan`` if no crossing is found.
-    noise : float
-        Estimated noise level.
-    thr : float
-        Threshold value (``tol_factor * noise``).
-    sm : ndarray
-        Smoothed PSD.
-    kguard : float
-        Low-frequency guard value (``k_min_frac * k[-1]``).
-    i0 : int
-        Index where the noise tail starts.
-    """
+                  k_min_frac, noise_mode, mad_sigma):
+    """Threshold-crossing cutoff on a smoothed 1D PSD."""
     sm = _moving_median(psd, smooth_w)
     n  = len(sm)
     i0 = max(1, int((1 - tail_frac) * n))
-    valid = np.isfinite(sm) & (sm > 0)
-    if counts is not None:
-        valid &= np.asarray(counts) > 0
-    tail = sm[i0:][valid[i0:]]
+    tail = sm[i0:][np.isfinite(sm[i0:]) & (sm[i0:] > 0)]
     if tail.size < 5:
         noise = float(np.nanmedian(sm[i0:]))
     elif noise_mode == "p80":
         noise = float(np.percentile(tail, 80))
-    else:   # mad
-        med = float(np.median(tail))
-        noise = med + mad_sigma * 1.4826 * float(np.median(np.abs(tail-med)))
+    else:
+        med   = float(np.median(tail))
+        noise = med + mad_sigma * 1.4826 * float(np.median(np.abs(tail - med)))
     thr    = tol_factor * noise
     kguard = k_min_frac * k[-1]
     s = sm - thr
     for i in range(max(1, int(np.searchsorted(k, kguard))), n):
-        if np.isfinite(s[i-1]) and np.isfinite(s[i]) and s[i-1]>0 and s[i]<=0:
-            k1,k2,s1,s2 = k[i-1],k[i],s[i-1],s[i]
-            kc = k2 if s1==s2 else k1 + (0-s1)*(k2-k1)/(s2-s1)
+        if np.isfinite(s[i - 1]) and np.isfinite(s[i]) and s[i - 1] > 0 and s[i] <= 0:
+            k1, k2, s1, s2 = k[i - 1], k[i], s[i - 1], s[i]
+            kc = k2 if s1 == s2 else k1 + (0 - s1) * (k2 - k1) / (s2 - s1)
             return float(kc), noise, thr, sm, float(kguard), i0
     return np.nan, noise, thr, sm, float(kguard), i0
+
+
+def _decay_rate(k, sm):
+    """Mean log-slope of a smoothed profile (higher = faster decay = worse resolution)."""
+    k  = np.asarray(k,  float)
+    sm = np.asarray(sm, float)
+    m  = np.isfinite(k) & np.isfinite(sm) & (sm > 0) & (k > 0)
+    if m.sum() < 5:
+        return np.nan
+    with np.errstate(divide="ignore"):
+        logp = np.log(sm[m] + 1e-30)
+    return -float(np.nanmean(np.gradient(logp, k[m])))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -222,99 +109,182 @@ def _quick_cutoff(k, psd, *, tail_frac, smooth_w, tol_factor,
 # ─────────────────────────────────────────────────────────────────────────────
 
 def compute_psd_analysis(
-    vol_zyx,
-    voxel_nm=(0.4, 0.4, 0.4),
+    vol,
+    voxel_nm=0.4,
     *,
-    band=2,
-    tail_frac_axis=(0.15, 0.15, 0.15),
+    tilt_axis=None,
+    band=0.25,
+    tail_frac=0.2,
     tol_factor=1.0,
     smooth_w=11,
     k_min_frac=0.10,
     noise_mode="p80",
     mad_sigma=3.0,
+    debug=False,
 ):
     """
-    Compute the 3D PSD of *vol_zyx* and extract 1D profiles along kx/ky/kz.
+    Compute 3D PSD, detect physical axes, and extract 1D profiles.
+
+    The volume is automatically reordered so that after this call:
+        out["vol_zyx"]      shape (Z, Y, X)  –  Z is always the tilt axis
+        out["axis_1d"]["kz"]                 –  profile along tilt axis
+        out["axis_1d"]["kx/ky"]              –  lateral profiles
 
     Parameters
     ----------
-    vol_zyx : ndarray, shape (Z, Y, X)
-        Reconstruction volume; Z must be the tilt / missing-wedge axis.
-    voxel_nm : tuple of float, (dz, dy, dx)
-        Voxel size in nm along each axis.
-    band : int
-        Half-width (in voxels) of the central slab averaged for each 1D profile.
-    tail_frac_axis : tuple of float, (fx, fy, fz)
-        Tail fraction for the quick noise cutoff on each axis.
+    vol : ndarray, shape (D0, D1, D2)
+        Input volume; axes can be in any order.
+    voxel_nm : float or (d0, d1, d2)
+        Voxel size in nm. Scalar → isotropic.
+    tilt_axis : int (0, 1, 2) or None
+        Force an array dimension of *vol* as the tilt/Z axis.
+        Use this when there is no missing wedge and auto-detection may fail.
+        None (default) → the axis with the fastest PSD decay is used.
+    band : float
+        Half-width of the central averaging slab in nm⁻¹ for 1D profiles.
+    tail_frac : float
+        Fraction of the profile tail used for noise estimation.
     tol_factor : float
-        Threshold multiplier on the noise estimate (``thr = tol_factor * noise``).
+        Noise threshold multiplier (thr = tol_factor × noise).
     smooth_w : int
-        Running-median window width for profile smoothing.
+        Running-median window width.
     k_min_frac : float
-        Low-frequency guard as a fraction of the Nyquist frequency.
+        Low-frequency guard (fraction of Nyquist).
     noise_mode : {"p80", "mad"}
-        Noise estimator: 80th percentile or median ± MAD.
+        Noise estimator.
     mad_sigma : float
-        MAD multiplier (only used when ``noise_mode="mad"``).
+        Sigma multiplier for MAD estimator.
+    debug : bool
+        Print axis detection summary.
 
     Returns
     -------
-    dict with keys:
-        vol_shape : tuple (Z, Y, X)
-        centers   : dict {z0, y0, x0}  — central slice indices
-        voxel_nm  : tuple (dz, dy, dx)
-        PSD       : ndarray, shape (Z, Y, X)
-        axes      : dict {fx, fy, fz, dkx, dky, dkz, nyquist}
-        planes    : dict {kxky, kxkz, kykz}  — 2-D central PSD slices
-        axis_1d   : dict {kx, ky, kz}  — each a dict with k, raw, smooth,
-                    kc, noise, thr, kmin, i0
+    dict
+        vol_zyx      ndarray (Z, Y, X)
+        vol_shape    (Z, Y, X)
+        centers      {z0, y0, x0}
+        voxel_nm     (dz, dy, dx) in physical order
+        perm         permutation applied to vol → vol_zyx
+        PSD          ndarray (Z, Y, X)  fftshifted 3D PSD
+        axes         {fx, fy, fz, dkx, dky, dkz, nyquist}
+        planes       {kxky, kxkz, kykz}  central 2D PSD slices
+        axis_1d      {kx, ky, kz}  each: {k, raw, smooth, kc, noise, thr, kmin, i0}
+        band         band used (nm⁻¹)
+        decay_rates  {kx, ky, kz} PSD decay rates on raw vol (for diagnostics)
     """
-    def _to3(x):
-        return (float(x),)*3 if np.isscalar(x) else tuple(float(v) for v in x)
+    vox_raw = (float(voxel_nm),) * 3 if np.isscalar(voxel_nm) else tuple(float(v) for v in voxel_nm)
+    D0, D1, D2 = vol.shape
 
-    tf = _to3(tail_frac_axis)
-    dz, dy, dx = map(float, voxel_nm)
+    # ── 3D PSD on raw volume ────────────────────────────────────────────────
+    PSD_raw = np.abs(np.fft.fftshift(np.fft.fftn(vol.astype(np.float32)))) ** 2
+
+    # raw frequency axes: dim0↔kz_raw  dim1↔ky_raw  dim2↔kx_raw
+    f_raw = [
+        np.fft.fftshift(np.fft.fftfreq(D0, vox_raw[0])),   # kz_raw
+        np.fft.fftshift(np.fft.fftfreq(D1, vox_raw[1])),   # ky_raw
+        np.fft.fftshift(np.fft.fftfreq(D2, vox_raw[2])),   # kx_raw
+    ]
+    dk_raw = [abs(f[1] - f[0]) for f in f_raw]    # dkz, dky, dkx
+
+    # raw profiles for axis detection
+    def _raw_profile(kax):
+        prof = _axis_profile(PSD_raw, kax, band, dk_raw[2], dk_raw[1], dk_raw[0])
+        freq = f_raw[{"kx": 2, "ky": 1, "kz": 0}[kax]]
+        prof = np.asarray(prof, float); freq = np.asarray(freq, float)
+        m = np.isfinite(freq) & (freq >= 0) & np.isfinite(prof)
+        if m.sum() < 10:
+            return {"k": np.array([]), "smooth": np.array([])}
+        kp, pp = freq[m], prof[m]
+        sm = _moving_median(pp, smooth_w)
+        return {"k": kp, "smooth": sm}
+
+    p_raw = {ax: _raw_profile(ax) for ax in ("kx", "ky", "kz")}
+    decay = {ax: _decay_rate(p_raw[ax]["k"], p_raw[ax]["smooth"]) for ax in ("kx", "ky", "kz")}
+
+    # ── detect / force tilt axis ────────────────────────────────────────────
+    # k-axis name → raw PSD dim index
+    k_to_dim = {"kz": 0, "ky": 1, "kx": 2}
+
+    if tilt_axis is None:
+        order   = sorted(decay.items(),
+                         key=lambda x: x[1] if np.isfinite(x[1]) else -np.inf,
+                         reverse=True)
+        z_kname = order[0][0]
+        xy      = [a for a, _ in order[1:]]
+    else:
+        if tilt_axis not in (0, 1, 2):
+            raise ValueError(f"tilt_axis must be 0, 1, or 2; got {tilt_axis}")
+        z_kname = {0: "kz", 1: "ky", 2: "kx"}[tilt_axis]
+        remaining = sorted(
+            [a for a in ("kx", "ky", "kz") if a != z_kname],
+            key=lambda a: -decay.get(a, -np.inf) if np.isfinite(decay.get(a, np.nan)) else -np.inf
+        )
+        xy = remaining  # higher decay → X, lower → Y
+
+    # permutation: output [Z, Y, X] ← raw dims
+    perm = [k_to_dim[z_kname], k_to_dim[xy[1]], k_to_dim[xy[0]]]
+
+    if debug:
+        print("\n[AXIS DETECTION]")
+        for ax, v in decay.items():
+            tag = " ← tilt (Z)" if ax == z_kname else ""
+            print(f"  {ax}: decay={v:.3e}{tag}" if np.isfinite(v) else f"  {ax}: nan{tag}")
+        print(f"  permutation {perm}: raw dims → (Z, Y, X)")
+
+    # ── reorder vol and PSD to physical (Z, Y, X) ───────────────────────────
+    # 3D FFT is separable → transposing vol ↔ transposing its PSD
+    vol_zyx = np.transpose(vol, perm)
+    PSD     = np.transpose(PSD_raw, perm)
+
     Z, Y, X = vol_zyx.shape
-    z0, y0, x0 = Z//2, Y//2, X//2
+    z0, y0, x0 = Z // 2, Y // 2, X // 2
 
-    PSD = np.abs(np.fft.fftshift(np.fft.fftn(vol_zyx.astype(np.float32))))**2
+    # voxel sizes and freq axes in physical order
+    dz = vox_raw[perm[0]]; dy = vox_raw[perm[1]]; dx = vox_raw[perm[2]]
+    fz = np.fft.fftshift(np.fft.fftfreq(Z, dz))
+    fy = np.fft.fftshift(np.fft.fftfreq(Y, dy))
+    fx = np.fft.fftshift(np.fft.fftfreq(X, dx))
+    dkz = abs(fz[1] - fz[0]); dky = abs(fy[1] - fy[0]); dkx = abs(fx[1] - fx[0])
 
-    fx = np.fft.fftshift(np.fft.fftfreq(X, d=dx))
-    fy = np.fft.fftshift(np.fft.fftfreq(Y, d=dy))
-    fz = np.fft.fftshift(np.fft.fftfreq(Z, d=dz))
-    dkx = abs(fx[1]-fx[0]); dky = abs(fy[1]-fy[0]); dkz = abs(fz[1]-fz[0])
-
-    def _profile(axis, freq, tf_i):
-        prof = _axis_profile(PSD, axis, band)
-        m = freq >= 0
+    # ── 1D profiles on physically ordered PSD ───────────────────────────────
+    def _profile(kax, freq):
+        prof = _axis_profile(PSD, kax, band, dkx, dky, dkz)
+        prof = np.asarray(prof, float); freq = np.asarray(freq, float)
+        m = np.isfinite(freq) & (freq >= 0) & np.isfinite(prof)
+        if m.sum() < 10:
+            return {"k": np.array([]), "raw": np.array([]), "smooth": np.array([]),
+                    "kc": np.nan, "noise": np.nan, "thr": np.nan, "kmin": np.nan, "i0": 0}
         kp, pp = freq[m], prof[m]
         kc, noise, thr, sm, kmin, i0 = _quick_cutoff(
-            kp, pp,
-            tail_frac=tf_i, smooth_w=smooth_w, tol_factor=tol_factor,
+            kp, pp, tail_frac=tail_frac, smooth_w=smooth_w, tol_factor=tol_factor,
             k_min_frac=k_min_frac, noise_mode=noise_mode, mad_sigma=mad_sigma)
-        return {"k":kp, "raw":pp, "smooth":sm, "kc":kc,
-                "noise":noise, "thr":thr, "kmin":kmin, "i0":i0}
+        return {"k": kp, "raw": pp, "smooth": sm, "kc": kc,
+                "noise": noise, "thr": thr, "kmin": kmin, "i0": i0}
 
     return {
-        "vol_shape": (Z, Y, X),
-        "centers":   {"z0":z0, "y0":y0, "x0":x0},
-        "voxel_nm":  (dz, dy, dx),
-        "PSD":       PSD,
+        "vol_zyx":     vol_zyx,
+        "vol_shape":   (Z, Y, X),
+        "centers":     {"z0": z0, "y0": y0, "x0": x0},
+        "voxel_nm":    (dz, dy, dx),
+        "perm":        perm,
+        "band":        band,
+        "PSD":         PSD,
         "axes": {
-            "fx":fx, "fy":fy, "fz":fz,
-            "dkx":dkx, "dky":dky, "dkz":dkz,
-            "nyquist": (1/(2*dx), 1/(2*dy), 1/(2*dz)),
+            "fx": fx, "fy": fy, "fz": fz,
+            "dkx": dkx, "dky": dky, "dkz": dkz,
+            "nyquist": (1 / (2 * dx), 1 / (2 * dy), 1 / (2 * dz)),
         },
         "planes": {
-            "kxky": PSD[z0, :, :],   # shape (Y, X)
-            "kxkz": PSD[:, y0, :],   # shape (Z, X)
-            "kykz": PSD[:, :, x0],   # shape (Z, Y)
+            "kxky": PSD[z0, :, :],   # lateral plane  (Y, X)
+            "kxkz": PSD[:, y0, :],   # tilt plane XZ  (Z, X)
+            "kykz": PSD[:, :, x0],   # tilt plane YZ  (Z, Y)
         },
         "axis_1d": {
-            "kx": _profile("kx", fx, tf[0]),
-            "ky": _profile("ky", fy, tf[1]),
-            "kz": _profile("kz", fz, tf[2]),
+            "kx": _profile("kx", fx),   # lateral X
+            "ky": _profile("ky", fy),   # lateral Y
+            "kz": _profile("kz", fz),   # tilt / Z
         },
+        "decay_rates": decay,
     }
 
 
@@ -322,184 +292,130 @@ def compute_psd_analysis(
 # Visualisation
 # ─────────────────────────────────────────────────────────────────────────────
 
-def plot_real_space(vol_zyx, centers, cmap, voxel_nm=(1,1,1), title_prefix="Real space"):
+def plot_real_space(out, cmap="gray", title=""):
     """
-    Show three orthogonal central slices of the volume in physical nm units.
-
-    Parameters
-    ----------
-    vol_zyx : ndarray, shape (Z, Y, X)
-        Reconstruction volume.
-    centers : dict {z0, y0, x0}
-        Integer indices of the central slices; falls back to shape//2 if a key
-        is missing.
-    cmap : str or Colormap
-        Matplotlib colormap for the images.
-    voxel_nm : tuple of float, (dz, dy, dx), optional
-        Voxel size in nm; default (1, 1, 1).
-    title_prefix : str, optional
-        Figure suptitle; default "Real space".
-
-    Returns
-    -------
-    matplotlib.figure.Figure
-    """
-    dz, dy, dx = voxel_nm
-    Z, Y, X = vol_zyx.shape
-    z0 = centers.get("z0", Z//2)
-    y0 = centers.get("y0", Y//2)
-    x0 = centers.get("x0", X//2)
-
-    fig, ax = plt.subplots(1, 3, figsize=(12, 3.7))
-    kw = dict(cmap=cmap, origin="lower", aspect="equal")
-    ax[0].imshow(_norm(vol_zyx[z0,:,:]), extent=[0,X*dx,0,Y*dy], **kw)
-    ax[0].set(title="XY", xlabel="x (nm)", ylabel="y (nm)")
-    ax[1].imshow(_norm(vol_zyx[:,y0,:]), extent=[0,X*dx,0,Z*dz], **kw)
-    ax[1].set(title="XZ", xlabel="x (nm)", ylabel="z (nm)")
-    ax[2].imshow(_norm(vol_zyx[:,:,x0]), extent=[0,Y*dy,0,Z*dz], **kw)
-    ax[2].set(title="YZ", xlabel="y (nm)", ylabel="z (nm)")
-    plt.suptitle(title_prefix, y=1.01)
-    plt.tight_layout(); plt.show()
-    return fig
-
-
-def plot_psd_planes(out, vmin_log=None, vmax_log=None, cmap="gray", axis_labels=None, eps=1e-30):
-    """
-    Show the three principal PSD planes (kx–ky, kx–kz, ky–kz) on a log scale.
+    Three orthogonal central slices of the volume in physical nm units.
 
     Parameters
     ----------
     out : dict
         Output of ``compute_psd_analysis``.
-    vmin_log : float or None
-        Lower display limit in log₁₀ units; auto-set to the 10th percentile if None.
-    vmax_log : float or None
-        Upper display limit in log₁₀ units; auto-set to the 99.99th percentile if None.
-    cmap : str or Colormap, optional
-        Matplotlib colormap; default "gray".
-    axis_labels : dict or None, optional
-        Label dict from ``make_axis_labels``; built automatically if None.
-    eps : float, optional
-        Floor added before log₁₀ to avoid log(0); default 1e-30.
+    cmap : str or Colormap
+    title : str
 
     Returns
     -------
     matplotlib.figure.Figure
     """
-    fx, fy, fz = out["axes"]["fx"], out["axes"]["fy"], out["axes"]["fz"]
-    lbls = axis_labels or make_axis_labels()
+    vol   = out["vol_zyx"]
+    dz, dy, dx = out["voxel_nm"]
+    Z, Y, X    = out["vol_shape"]
+    c          = out["centers"]
 
-    Ls = [np.log10(np.maximum(out["planes"][k], eps))
-          for k in ("kxky","kxkz","kykz")]
+    fig, axes = plt.subplots(1, 3, figsize=(12, 3.7))
+    kw = dict(cmap=cmap, origin="lower", aspect="equal")
+    axes[0].imshow(_norm(vol[c["z0"], :, :]),  extent=[0, X*dx, 0, Y*dy], **kw)
+    axes[0].set(title="XY  (Z slice)",  xlabel="x (nm)", ylabel="y (nm)")
+    axes[1].imshow(_norm(vol[:, c["y0"], :]),  extent=[0, X*dx, 0, Z*dz], **kw)
+    axes[1].set(title="XZ  (Y slice) ← tilt", xlabel="x (nm)", ylabel="z (nm)")
+    axes[2].imshow(_norm(vol[:, :, c["x0"]]),  extent=[0, Y*dy, 0, Z*dz], **kw)
+    axes[2].set(title="YZ  (X slice) ← tilt", xlabel="y (nm)", ylabel="z (nm)")
+    if title:
+        fig.suptitle(title, y=1.01)
+    plt.tight_layout(); plt.show()
+    return fig
+
+
+def plot_psd_planes(out, *, show_bands=False, vmin_log=None, vmax_log=None,
+                   cmap="gray", eps=1e-30, alpha_band=0.25):
+    """
+    Three principal PSD planes on a log scale, with optional profile-band overlay.
+
+    Planes shown:
+        kx–ky  (lateral, no MW)
+        kx–kz  (tilt plane, MW visible along kz)
+        ky–kz  (tilt plane, MW visible along kz)
+
+    Parameters
+    ----------
+    out : dict
+        Output of ``compute_psd_analysis``.
+    show_bands : bool
+        Overlay the slab regions used to extract 1D profiles. Default False.
+    vmin_log, vmax_log : float or None
+        Log₁₀ display limits; auto-set if None.
+    cmap : str or Colormap
+    eps : float
+        Floor before log₁₀.
+    alpha_band : float
+        Transparency of band rectangles when show_bands=True.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    fx = out["axes"]["fx"]; fy = out["axes"]["fy"]; fz = out["axes"]["fz"]
+    dkx = out["axes"]["dkx"]; dky = out["axes"]["dky"]; dkz = out["axes"]["dkz"]
+    Z, Y, X  = out["vol_shape"]
+    z0, y0, x0 = out["centers"]["z0"], out["centers"]["y0"], out["centers"]["x0"]
+    band     = out["band"]
+
+    Ls = [np.log10(np.maximum(out["planes"][k], eps)) for k in ("kxky", "kxkz", "kykz")]
     all_v = np.concatenate([L.ravel() for L in Ls])
-    if vmax_log is None:
-        vmax_log = float(np.nanpercentile(all_v, 99.99))
-    if vmin_log is None:
-        vmin_log = float(np.nanpercentile(all_v, 10.0))
+    if vmax_log is None: vmax_log = float(np.nanpercentile(all_v, 99.99))
+    if vmin_log is None: vmin_log = float(np.nanpercentile(all_v, 10.0))
 
-    exts   = [[fx[0],fx[-1],fy[0],fy[-1]],
-               [fx[0],fx[-1],fz[0],fz[-1]],
-               [fy[0],fy[-1],fz[0],fz[-1]]]
-    xlbls  = [lbls["kx"], lbls["kx"], lbls["ky"]]
-    ylbls  = [lbls["ky"], lbls["kz"], lbls["kz"]]
-    titles = [f"{lbls['kx_title']}–{lbls['ky_title']}",
-              f"{lbls['kx_title']}–{lbls['kz_title']}  ← MW",
-              f"{lbls['ky_title']}–{lbls['kz_title']}  ← MW"]
+    kw = dict(cmap=cmap, vmin=vmin_log, vmax=vmax_log, origin="lower", aspect="auto")
+    exts   = [[fx[0], fx[-1], fy[0], fy[-1]],
+              [fx[0], fx[-1], fz[0], fz[-1]],
+              [fy[0], fy[-1], fz[0], fz[-1]]]
+    xlbls  = [r"$k_X$ (nm$^{-1}$)", r"$k_X$ (nm$^{-1}$)", r"$k_Y$ (nm$^{-1}$)"]
+    ylbls  = [r"$k_Y$ (nm$^{-1}$)", r"$k_Z$ (nm$^{-1}$)", r"$k_Z$ (nm$^{-1}$)"]
+    titles = [r"$k_X$–$k_Y$  (lateral)",
+              r"$k_X$–$k_Z$  ← MW",
+              r"$k_Y$–$k_Z$  ← MW"]
 
     fig, axes = plt.subplots(1, 3, figsize=(13.5, 4))
-    kw = dict(cmap=cmap, vmin=vmin_log, vmax=vmax_log, origin="lower", aspect="auto")
     for ax, L, ext, xl, yl, t in zip(axes, Ls, exts, xlbls, ylbls, titles):
         im = ax.imshow(L, extent=ext, **kw)
         ax.set(xlabel=xl, ylabel=yl, title=t)
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+    if show_bands:
+        bx = max(1, int(np.round(band / dkx)))
+        by = max(1, int(np.round(band / dky)))
+        bz = max(1, int(np.round(band / dkz)))
+
+        # slab edges in frequency space
+        kx_lo, kx_hi = fx[max(0, x0 - bx)], fx[min(X - 1, x0 + bx)]
+        ky_lo, ky_hi = fy[max(0, y0 - by)], fy[min(Y - 1, y0 + by)]
+        kz_lo, kz_hi = fz[max(0, z0 - bz)], fz[min(Z - 1, z0 + bz)]
+
+        def _rect(ax_, x0r, y0r, w, h, color, label):
+            ax_.add_patch(mpatches.Rectangle(
+                (x0r, y0r), w, h, linewidth=1.5,
+                edgecolor=color, facecolor=color, alpha=alpha_band, label=label, zorder=3))
+
+        kx_span = fx[-1] - fx[0]; ky_span = fy[-1] - fy[0]; kz_span = fz[-1] - fz[0]
+
+        # kx–ky plane: show kx slab (blue, restricted ky) and ky slab (green, restricted kx)
+        _rect(axes[0], fx[0],  ky_lo, kx_span,   ky_hi - ky_lo, "tab:blue",  "kx profile slab")
+        _rect(axes[0], kx_lo, fy[0],  kx_hi - kx_lo, ky_span,   "tab:green", "ky profile slab")
+        # kx–kz plane
+        _rect(axes[1], fx[0],  kz_lo, kx_span,   kz_hi - kz_lo, "tab:blue",  "kx profile slab")
+        _rect(axes[1], kx_lo, fz[0],  kx_hi - kx_lo, kz_span,   "tab:red",   "kz profile slab")
+        # ky–kz plane
+        _rect(axes[2], fy[0],  kz_lo, ky_span,   kz_hi - kz_lo, "tab:green", "ky profile slab")
+        _rect(axes[2], ky_lo, fz[0],  ky_hi - ky_lo, kz_span,   "tab:red",   "kz profile slab")
+
+        handles = [
+            mpatches.Patch(color="tab:blue",  label="kx slab"),
+            mpatches.Patch(color="tab:green", label="ky slab"),
+            mpatches.Patch(color="tab:red",   label="kz slab (tilt)"),
+        ]
+        axes[2].legend(handles=handles, fontsize=7, loc="lower right")
+
     plt.tight_layout(); plt.show()
-    return fig
-
-
-def plot_axis_profiles_1d(out, axis_labels=None, show_tail=True):
-    """
-    Plot 1D PSD profiles along kx, ky, and kz with threshold and cutoff markers.
-
-    Parameters
-    ----------
-    out : dict
-        Output of ``compute_psd_analysis``.
-    axis_labels : dict or None, optional
-        Label dict from ``make_axis_labels``; built automatically if None.
-    show_tail : bool, optional
-        Shade the noise-tail region used to estimate the threshold; default True.
-
-    Returns
-    -------
-    matplotlib.figure.Figure
-    """
-    lbls = axis_labels or make_axis_labels()
-    nyq  = out["axes"]["nyquist"]
-    cfg  = [("kx", nyq[0], lbls["kx"], lbls["kx_title"]),
-            ("ky", nyq[1], lbls["ky"], lbls["ky_title"]),
-            ("kz", nyq[2], lbls["kz"], lbls["kz_title"])]
-
-    fig, axes = plt.subplots(1, 3, figsize=(13.5, 3.7))
-    for ax, (key, nyq_i, xlabel, title_k) in zip(axes, cfg):
-        d   = out["axis_1d"][key]
-        k   = np.asarray(d["k"]); raw = np.asarray(d["raw"])
-        sm  = np.asarray(d["smooth"])
-        kc  = float(d["kc"]); thr = float(d["thr"]); i0 = int(d["i0"])
-
-        ax.scatter(k, raw, s=10, alpha=0.3, label="PSD")
-        ax.plot(k, sm, lw=1, color="orange", label="smoothed")
-        if show_tail and 0 <= i0 < len(k):
-            ax.axvspan(k[i0], k[-1], alpha=0.12, label="noise tail")
-        ax.axhline(thr, ls="--", lw=1, label="threshold")
-        if np.isfinite(kc) and kc > 0:
-            ax.axvline(kc, ls=":", lw=2,
-                       label=f"kc={kc:.3g} → {1/kc:.2f} nm")
-        ax.axvline(nyq_i, ls="--", lw=1, color="k")
-        ax.text(0.02, 0.95, f"Nyquist={nyq_i:.3g} nm⁻¹",
-                transform=ax.transAxes, va="top", fontsize=8)
-        ax.set(yscale="log", title=f"PSD along {title_k}",
-               xlabel=xlabel, ylabel="PSD (a.u.)")
-        ax.legend(fontsize=7, loc="best")
-    plt.tight_layout(); plt.show()
-    return fig
-
-
-def plot_axis_profiles_overlay(out, axis_labels=None):
-    """
-    Plot all three 1D profiles in one panel to identify the fastest-dropping axis.
-
-    The axis whose PSD drops fastest toward high frequencies is typically the
-    tilt (missing-wedge) axis, which limits resolution most strongly.
-
-    Parameters
-    ----------
-    out : dict
-        Output of ``compute_psd_analysis``.
-    axis_labels : dict or None, optional
-        Label dict from ``make_axis_labels``; built automatically if None.
-
-    Returns
-    -------
-    matplotlib.figure.Figure
-    """
-    lbls = axis_labels or make_axis_labels()
-    cfg  = [("kx", lbls["kx_title"], "tab:blue"),
-            ("ky", lbls["ky_title"], "tab:orange"),
-            ("kz", lbls["kz_title"], "tab:red")]
-
-    fig, ax = plt.subplots(figsize=(7, 4))
-    for key, title, color in cfg:
-        d  = out["axis_1d"][key]
-        k  = np.asarray(d["k"]); sm = np.asarray(d["smooth"])
-        kc = float(d["kc"])
-        ax.plot(k, sm, lw=1.5, color=color, label=title)
-        if np.isfinite(kc) and kc > 0:
-            ax.axvline(kc, ls=":", lw=1.5, color=color,
-                       label=f"kc={kc:.3g} → {1/kc:.2f} nm")
-    ax.set(yscale="log", xlabel=r"$k\;(\mathrm{nm}^{-1})$",
-           ylabel="PSD (a.u.)",
-           title="Overlaid profiles — fastest drop = tilt axis")
-    ax.legend(fontsize=9); plt.tight_layout(); plt.show()
     return fig
 
 
@@ -511,36 +427,28 @@ def lorentz_psd_C(k, A, xi, p, C):
     """
     Lorentzian PSD model with additive pedestal.
 
-    .. math::
-
-        \\mathrm{PSD}(k) = \\frac{A}{\\left(1 + (2\\pi k \\xi)^2\\right)^p} + C
+    PSD(k) = A / (1 + (2π k ξ)²)^p  +  C
 
     Parameters
     ----------
     k : array_like
         Spatial frequency (nm⁻¹).
     A : float
-        Signal amplitude at k = 0, above the pedestal.
+        Signal amplitude at k = 0.
     xi : float
-        Correlation length (nm); controls the roll-off frequency.
+        Correlation length (nm).
     p : float
-        Decay exponent; p = 1 gives a standard Lorentzian.
+        Decay exponent.
     C : float
-        Additive noise pedestal.
-
-    Returns
-    -------
-    ndarray
-        Model PSD values at each *k*.
+        Noise pedestal.
     """
-    k = np.asarray(k, float)
-    return A / (1.0 + (2.0*np.pi*k*xi)**2)**p + C
+    return A / (1.0 + (2.0 * np.pi * np.asarray(k, float) * xi) ** 2) ** p + C
 
 
 def fit_lorentz_cutoff(
     k, psd_s,
     *,
-    kmin=0.01,
+    kmin=0.0,
     kmax_frac=0.97,
     min_pts=20,
     noise_tail_frac=0.20,
@@ -551,53 +459,36 @@ def fit_lorentz_cutoff(
     """
     Fit a Lorentzian+C model to a 1D PSD profile and find the resolution cutoff.
 
-    The cutoff is defined as the crossing of the fitted Lorentzian curve with a
-    linear noise floor estimated from the high-frequency tail of the profile
-    (in log space).
+    The cutoff is the crossing of the fitted curve with a linear noise floor
+    estimated from the high-k tail (in log space).
 
     Parameters
     ----------
     k : array_like
-        Spatial-frequency axis (nm⁻¹), positive half only.
+        Spatial-frequency axis (nm⁻¹), positive half.
     psd_s : array_like
-        Smoothed 1-D PSD values corresponding to *k*.
-    kmin : float, optional
-        Lower bound of the Lorentzian fit window (nm⁻¹); default 0.01.
-    kmax_frac : float, optional
-        Upper bound as a fraction of the maximum valid frequency; default 0.97.
-    min_pts : int, optional
-        Minimum number of points required inside the fit window; default 20.
-    noise_tail_frac : float, optional
-        Fraction of the full profile (from the high-k end) used to fit the
-        noise line in log space; default 0.20.
-    noise_kmax_frac : float, optional
-        Trim the profile above ``noise_kmax_frac * kmax`` before the noise fit
-        to guard against high-frequency artefacts; default 1.0 (no trim).
-    choose_cut : {"first", "last"}, optional
-        Which crossing to report when multiple are found; default "last".
-    eps : float, optional
-        Numerical floor added before log₁₀ to avoid log(0); default 1e-30.
+        Smoothed PSD values (e.g. ``out["axis_1d"]["kz"]["smooth"]``).
+    kmin : float
+        Lower fit bound (nm⁻¹).
+    kmax_frac : float
+        Upper fit bound as fraction of max valid frequency.
+    min_pts : int
+        Minimum points required in fit window.
+    noise_tail_frac : float
+        Fraction of the profile used to fit the noise line.
+    noise_kmax_frac : float
+        Trim above this fraction of kmax before noise fit.
+    choose_cut : {"first", "last"}
+        Which crossing to report when multiple exist.
+    eps : float
+        Numerical floor before log₁₀.
 
     Returns
     -------
-    dict
-        Always contains key ``ok`` (bool).
-
-        On success (``ok=True``):
-            ``A``, ``xi``, ``p``, ``C``         — fit parameters,
-            ``A_err``, ``xi_err``, ``p_err``, ``C_err`` — 1-σ uncertainties,
-            ``r2_lorentz``                       — R² of the Lorentzian fit,
-            ``fit_range``                        — (kmin, khi) tuple,
-            ``noise_line``                       — dict {a, b, r2, n_tail,
-                                                   k_range, k_used, psd_used},
-            ``k_cut``, ``res_cut_nm``            — cutoff frequency and resolution,
-            ``cut_mode``                         — "crossing" or "min_distance",
-            ``crossings``                        — list of all crossing frequencies,
-            ``log_gap_at_cut``                   — log₁₀ gap at the chosen cutoff.
-
-        On failure (``ok=False``):
-            ``reason`` — description string,
-            ``fit_range`` — present when the window was established before failure.
+    dict  always contains ``ok`` (bool)
+        On success: A, xi, p, C, their errors, r2_lorentz, fit_range,
+                    noise_line, k_cut, res_cut_nm, cut_mode, crossings.
+        On failure: reason, fit_range (if established).
     """
     k     = np.asarray(k, float)
     psd_s = np.asarray(psd_s, float)
@@ -616,21 +507,22 @@ def fit_lorentz_cutoff(
     x = k[m]; y = psd_s[m]
     ylog = np.log10(np.maximum(y, eps))
 
-    # initial guesses
-    C0    = max(float(np.median(y[-max(8, y.size//6):])), eps)
+    C0    = max(float(np.median(y[-max(8, y.size // 6):])), eps)
     A0    = max(float(np.max(y) - C0), float(np.max(y)) * 0.5)
     y0    = np.maximum(y - C0, eps)
-    kh    = float(x[np.argmin(np.abs(y0 - np.max(y0)/2))])
-    xi0   = 1.0 / (2*np.pi*kh + 1e-30) if kh > 0 else 1.0
-    C_min = max(float(np.median(y[-max(5, x.size//10):])), eps)
+    kh    = float(x[np.argmin(np.abs(y0 - np.max(y0) / 2))])
+    xi0   = 1.0 / (2 * np.pi * kh + 1e-30) if kh > 0 else 1.0
+    C_min = max(float(np.median(y[-max(5, x.size // 10):])), eps)
+    C_min = min(C_min, C0 * 0.9)
 
     def _lm(kv, A, xi, p, C):
         return np.log10(np.maximum(lorentz_psd_C(kv, A, xi, p, C), eps))
 
     try:
-        popt, pcov = curve_fit(_lm, x, ylog, p0=[A0, xi0, 1.2, C0],
-                               bounds=([eps,eps,0.05,C_min],[np.inf,np.inf,20,np.inf]),
-                               maxfev=80000)
+        popt, pcov = curve_fit(
+            _lm, x, ylog, p0=[A0, xi0, 1.2, C0],
+            bounds=([eps, eps, 0.05, C_min], [np.inf, np.inf, 20, np.inf]),
+            maxfev=80000)
     except Exception as e:
         return {"ok": False, "reason": str(e), "fit_range": (kmin, khi)}
 
@@ -642,9 +534,9 @@ def fit_lorentz_cutoff(
         A_e = xi_e = p_e = C_e = np.nan
 
     yh = _lm(x, A, xi, p, C)
-    r2 = 1 - float(np.sum((ylog-yh)**2)) / (float(np.sum((ylog-ylog.mean())**2)) + 1e-30)
+    r2 = 1 - float(np.sum((ylog - yh) ** 2)) / (float(np.sum((ylog - ylog.mean()) ** 2)) + 1e-30)
 
-    # noise line on the full valid profile (not limited by kmax_frac)
+    # noise line
     bn    = base & (k <= noise_kmax_frac * kmax_data)
     order = np.argsort(k[bn])
     ks, ys = k[bn][order], psd_s[bn][order]
@@ -652,110 +544,104 @@ def fit_lorentz_cutoff(
     kt, pt = ks[-n_tail:], ys[-n_tail:]
     yt = np.log10(np.maximum(pt, eps))
     b_n, a_n = np.polyfit(kt, yt, 1)
-    r2n = 1 - float(np.sum((yt - (a_n+b_n*kt))**2)) / (float(np.sum((yt-yt.mean())**2))+1e-30)
+    r2n = 1 - float(np.sum((yt - (a_n + b_n * kt)) ** 2)) / (float(np.sum((yt - yt.mean()) ** 2)) + 1e-30)
 
-    # crossings (any sign change) or min distance
+    # crossings
     ke = np.sort(k[np.isfinite(k) & (k >= kmin)])
-    lg = (np.log10(np.maximum(lorentz_psd_C(ke,A,xi,p,C), eps))
-          - np.log10(np.maximum(10**(a_n+b_n*ke), eps)))
+    lg = (np.log10(np.maximum(lorentz_psd_C(ke, A, xi, p, C), eps))
+          - np.log10(np.maximum(10 ** (a_n + b_n * ke), eps)))
 
     crosses = []
     for i in range(1, ke.size):
-        if np.isfinite(lg[i-1]) and np.isfinite(lg[i]) and lg[i-1]*lg[i] <= 0:
-            g1,g2,k1,k2 = lg[i-1],lg[i],ke[i-1],ke[i]
-            crosses.append(float(k2) if g1==g2 else float(k1 - g1*(k2-k1)/(g2-g1)))
+        if np.isfinite(lg[i - 1]) and np.isfinite(lg[i]) and lg[i - 1] * lg[i] <= 0:
+            g1, g2, k1, k2 = lg[i - 1], lg[i], ke[i - 1], ke[i]
+            crosses.append(float(k2) if g1 == g2 else float(k1 - g1 * (k2 - k1) / (g2 - g1)))
 
     if crosses:
-        kc = crosses[0] if choose_cut=="first" else crosses[-1]
-        mode, gap = "crossing", 0.0
+        kc   = crosses[0] if choose_cut == "first" else crosses[-1]
+        mode = "crossing"; gap = 0.0
     else:
         idx  = int(np.argmin(np.abs(lg)))
         kc   = float(ke[idx]); gap = float(lg[idx]); mode = "min_distance"
 
-    res_nm = float(1/kc) if np.isfinite(kc) and kc > 0 else np.nan
-
     return {
         "ok": True,
-        "A":A, "xi":xi, "p":p, "C":C,
-        "A_err":A_e, "xi_err":xi_e, "p_err":p_e, "C_err":C_e,
+        "A": A, "xi": xi, "p": p, "C": C,
+        "A_err": A_e, "xi_err": xi_e, "p_err": p_e, "C_err": C_e,
         "r2_lorentz": r2,
         "fit_range": (kmin, khi),
         "noise_line": {
-            "a":a_n, "b":b_n, "r2":r2n,
-            "n_tail":int(kt.size),
-            "k_range":(float(kt[0]),float(kt[-1])),
-            "k_used":kt.copy(), "psd_used":pt.copy(),
+            "a": a_n, "b": b_n, "r2": r2n,
+            "n_tail": int(kt.size),
+            "k_range": (float(kt[0]), float(kt[-1])),
+            "k_used": kt.copy(), "psd_used": pt.copy(),
         },
-        "k_cut":kc, "res_cut_nm":res_nm,
-        "cut_mode":mode, "crossings":crosses, "log_gap_at_cut":gap,
+        "k_cut": kc, "res_cut_nm": float(1 / kc) if np.isfinite(kc) and kc > 0 else np.nan,
+        "cut_mode": mode, "crossings": crosses, "log_gap_at_cut": gap,
     }
 
 
-def plot_lorentz_fit(k, d_axis, fit, title="", save_path=None):
+def plot_lorentz_fit(out, axis, fit, title="", save_path=None):
     """
     Diagnostic plot for one Lorentzian resolution fit.
 
-    Overlays the raw PSD, the fitted Lorentzian+C curve, the noise line, and
-    the resolution cutoff marker on a single log-scale panel.
-
     Parameters
     ----------
-    k : ndarray
-        Spatial-frequency axis (nm⁻¹), same grid used for the fit.
-    d_axis : dict
-        One entry of ``out["axis_1d"]`` (must contain key ``"raw"``).
+    out : dict
+        Output of ``compute_psd_analysis``.
+    axis : {"kx", "ky", "kz"}
+        Which axis profile to plot.
     fit : dict
-        Output of ``fit_lorentz_cutoff`` for this axis.
-    title : str, optional
-        Panel title string; default "".
-    save_path : str or None, optional
-        If given, saves the figure to this path at 300 dpi.
+        Output of ``fit_lorentz_cutoff``.
+    title : str
+    save_path : str or None
+        If given, save the figure at 300 dpi.
 
     Returns
     -------
     matplotlib.figure.Figure
     """
+    d  = out["axis_1d"][axis]
+    k  = np.asarray(d["k"], float)
+    eps = 1e-30
+
     fig, ax = plt.subplots(figsize=(6, 4))
-    ax.scatter(k, np.asarray(d_axis["raw"], float), s=12, alpha=0.4, label="PSD raw")
+    ax.scatter(k, np.asarray(d["raw"], float), s=12, alpha=0.4, label="PSD raw")
 
     if fit.get("ok"):
         A, xi, p, C = fit["A"], fit["xi"], fit["p"], fit["C"]
         lo, hi = fit["fit_range"]
         mf = (k >= lo) & (k <= hi)
-        ax.plot(k[mf], lorentz_psd_C(k[mf],A,xi,p,C), "r-", lw=1.8,
+        ax.plot(k[mf], lorentz_psd_C(k[mf], A, xi, p, C), "r-", lw=1.8,
                 label=f"Lorentz+C  R²={fit['r2_lorentz']:.3f}")
         ax.axhline(C, ls=":", lw=1.2, color="tomato", label=f"C={C:.2e}")
 
         nl = fit["noise_line"]
-        ax.plot(k, 10**(nl["a"]+nl["b"]*k), "k--", lw=1.2,
-                label=f"Noise R²={nl['r2']:.2f}")
+        ax.plot(k, 10 ** (nl["a"] + nl["b"] * k), "k--", lw=1.2,
+                label=f"Noise  R²={nl['r2']:.2f}")
         ax.scatter(nl["k_used"], nl["psd_used"], s=35, color="k", zorder=5,
                    label=f"noise pts (n={nl['n_tail']})")
 
-        for xc in fit.get("crossings",[])[:-1]:
+        for xc in fit.get("crossings", [])[:-1]:
             ax.axvline(xc, color="gray", ls="--", lw=0.8, alpha=0.5)
 
         kc = fit["k_cut"]
         if np.isfinite(kc) and kc > 0:
             lbl = f"kc={kc:.3g} nm⁻¹ → {fit['res_cut_nm']:.2f} nm  [{fit['cut_mode']}]"
-            if fit["cut_mode"] == "min_distance":
-                lbl += f"  gap={fit['log_gap_at_cut']:+.2f}"
             ax.axvline(kc, color="purple", ls="-.", lw=2, label=lbl)
         else:
-            ax.text(0.5, 0.5, "No cutoff", transform=ax.transAxes,
-                    ha="center", color="red")
+            ax.text(0.5, 0.5, "No cutoff", transform=ax.transAxes, ha="center", color="red")
 
         xi_e = fit.get("xi_err", np.nan)
         if np.isfinite(xi_e):
             ax.text(0.97, 0.97, f"ξ={xi*1e3:.1f}±{xi_e*1e3:.1f} pm",
-                    transform=ax.transAxes, ha="right", va="top",
-                    fontsize=8, color="darkred")
+                    transform=ax.transAxes, ha="right", va="top", fontsize=8, color="darkred")
     else:
-        ax.text(0.5, 0.5, f"Fit failed:\n{fit.get('reason','')}",
+        ax.text(0.5, 0.5, f"Fit failed:\n{fit.get('reason', '')}",
                 transform=ax.transAxes, ha="center", color="red")
 
     ax.set(yscale="log", xlabel=r"Spatial frequency (nm$^{-1}$)",
-           ylabel="PSD (a.u.)", title=title)
+           ylabel="PSD (a.u.)", title=title or axis)
     ax.legend(fontsize=8, loc="upper right")
     plt.tight_layout()
     if save_path:

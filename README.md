@@ -1,40 +1,159 @@
-This repository contains python functions and jupyter notebooks to perform electron tomography reconstruction and restoration from nanoparticles datasets, as presented in the paper **[]**.
+# DL_etomo — Deep Learning strategies for Electron Tomography
 
-### Electron tomography reconstruction and restoration using supervised and unsupervised approaches
+**Recover high-quality and semi-quantitative 3D reconstructions from severely limited-angle, sparse-view, and low-dose electron tomography data** using physics-based, supervised, and unsupervised deep learning approaches.
 
-The paper compare classical approaches (SIRT, CS-TV), supervised approach (U-Net restoration) and unsupervised approach (Deep Image Prior) for the reconstruction and restoration of electron tomgoraphy data. The methods are applied on two scenario data sets :
-- One simulated data set containing 2D images of nanoparticles with simulated degraded acquisition conditions,
-- One 3D volume of projections from platinum nanoparticles acquired in a degraded scenario (-60°:2°:+60°).
+---
 
-The paper compares the different approaches in the context of tomographic reconstruction and restoration and focus in particular on degraded acquisition cases where the number of available projections is limited. The paper highlights the expected superiority of both DL approaches and shows there pros and cons depending of the acquisition scenario.
+## Overview
 
-![Example Image](Figs/simu_results.png)
+Electron tomography in real experimental conditions faces fundamental challenges:
 
-The figure show the reconstruction of one zone of interest in the simulated data set with SIRt and both DL approaches in different complex acquisitions scenarios.
+- **Limited-angle acquisition** — missing wedge artifacts
+- **Sparse projections** — undersampled angular coverage
+- **Low dose / noisy data** — poor signal-to-noise ratio
 
-### Dependencies
+Classical methods (SIRT, CS-TV) struggle in these regimes. This repository provides practical, reproducible solutions based on **Deep Image Prior (DIP)** and its multi-channel extension (**DIPm-TV**), requiring no labelled training data.
 
-The notebooks were tested with the following packages and versions : 
+---
+
+## Methods
+
+### Classical baselines
+- SIRT
+- CS-TV
+
+### Supervised deep learning
+- **U-Net** restoration of SIRT reconstructions
+
+### Unsupervised deep learning
+- **DIP-TV** — Deep Image Prior with Total Variation regularization
+- **DIPm-TV** — Multi-channel extension for joint reconstruction of correlated volumes (EDX / EELS channels)
+
+---
+
+## Applications
+
+Validated on multiple challenging scenarios:
+
+- **Simulated nanoparticle datasets** — 2D reconstructions across three acquisition regimes:
+  - -60°:2°:+60° (63 projections, limited-angle)
+  - -60°:10°:+60° (13 projections, sparse)
+  - -30°:2°:+30° (31 projections, limited-angle + narrow range)
+- **Simulated multi-channel phantoms** — EDX and EELS channel phantoms for DIPm-TV validation
+- **Experimental 3D tilt-series** — Platinum nanoparticles (-60°:2°:+60°, 63 projections)
+- **Experimental STEM-EDX tomography** — Phase-change memory (PCM) devices, Ti/Ge/Sb/Te channels (16 projections, ±40°)
+- **Experimental EELS tomography** — Core-loss iron-oxide mapping, Fe²⁺/Fe³⁺ channels (9 projections, ±70°)
+
+---
+
+## Associated Publications
+
+- **Unsupervised Deep Image Prior for Sparse-View and Limited-Angle Electron Tomography**  
+  S. Brosset, D. del Pozo Bueno, T. David, L. Guetaz, P. Ciuciu, Z. Saghi  
+  https://arxiv.org/abs/2605.27139
+
+- **Unsupervised Deep Learning for Limited-Angle STEM-EDX Tomography — Application to 3D Chemical Analysis of Phase-Change Memory Devices**  
+  D. del Pozo Bueno, S. Brosset, T. Monniez, G. Navarro, P. Ciuciu, Z. Saghi  
+  https://arxiv.org/abs/2606.10547
+
+- **Low-Dose 3D Bonding Mapping Through "Soft" Core-Loss EELS Tomography and Unsupervised Deep Learning**  
+  M. Pelaez-Fernandez, D. del Pozo Bueno, A. Teurtrie, S. Brosset, M. Marinova, P. Ciuciu, M. Estrader, G. Salazar-Alvarez, F. Peiró, R. Arenal, S. Estradé, Z. Saghi, F. De la Peña  
+  https://arxiv.org/abs/2606.10893
+
+---
+
+## Installation
+
+### Quick start
 
 ```bash
-- Python = 3.12.7
-- Tomosipo = 0.6.0
-- Numpy = 1.26.4
-- tqdm = 4.66.5
-- Matplotlib = 3.9.2
-- IPython = 8.29.0
-- Pytorch = 2.4.1
-- Einops = 0.8.0
-- Scikit-image = 0.24.0
-- Scipy = 1.14.1
-- Pytorch_msssim = 1.0.0
+git clone https://github.com/CEA-MetroCarac/DL_etomo.git
+cd DL_etomo
+conda env create -f environment.yml
+conda activate dl_etomo
 ```
 
-## How to use
+Open any notebook in `Notebooks/` and run.
 
-The Source functions are available in ```/Src``` and several notebooks to try the function are available in ```/Notebooks```. The notebooks are separated in Experimental and Training data sets. Both ```/Experimental``` and ```/Simulated``` repositories contains a notebook ```/*_supervised_restoration.ipynb``` for the training and restoration of a 2D SIRT reconstruction using a supervised U-Net and a ```/*_dip_reconstruction.ipynb``` notebook for the reconstruction of data from a 2D sinogram.
+> **CUDA note:** `astra-toolbox` is compiled for CUDA 11.8 (conda-forge). The PyTorch `cu118` wheel is backward-compatible with CUDA 12.x drivers (≥ 452.39).
 
-###
+### Requirements
 
-Data will be available from Zenodo (?) (Big for Data githbu folder..)
-Already trained models for restoration are available in the ```/Temp_out``` repository.
+| Package        | Version      | Install via         |
+| -------------- | ------------ | ------------------- |
+| Python         | ≥ 3.12       | conda               |
+| PyTorch (CUDA) | ≥ 2.4        | pip (cu118 wheel)   |
+| astra-toolbox  | = 2.2.0      | conda-forge         |
+| tomosipo       | ≥ 0.6.0      | conda-forge         |
+| numpy          | ≥ 2.0        | conda-forge         |
+| scipy          | ≥ 1.15       | conda-forge         |
+| matplotlib     | ≥ 3.10       | conda-forge         |
+| scikit-image   | ≥ 0.25       | conda-forge         |
+| tifffile       | ≥ 2024.1.1   | conda-forge         |
+| tqdm           | ≥ 4.67       | conda-forge         |
+| jupyterlab     | ≥ 4.3        | conda-forge         |
+| einops         | ≥ 0.8        | pip                 |
+
+> **NumPy 2.x required.** The codebase uses `np.inf` (lowercase), which replaced the removed `np.Inf` alias in NumPy 2.0.
+
+---
+
+## Usage
+
+Core source modules are in `Src/`. Notebooks in `Notebooks/Simulated/` and `Notebooks/Experimental/` provide ready-to-run examples.
+
+### Source modules
+
+| File                | Description                                                         |
+| ------------------- | ------------------------------------------------------------------- |
+| `dip.py`            | 2D DIP training loop with live notebook visualization               |
+| `dipm_tv.py`        | 3D multi-channel DIPm-TV: CNN3D architecture, TV loss, training loop |
+| `model.py`          | 2D U-Net for supervised restoration                                 |
+| `radon.py`          | 2D/3D Radon forward/backprojection and SIRT operators (Tomosipo)    |
+| `utils.py`          | Normalization, sinogram utilities, MS-SSIM loss                     |
+| `psd_resolution.py` | 3D PSD computation, Lorentzian fitting, resolution estimation        |
+
+### Notebooks
+
+| Notebook                           | Description                                                       |
+| ---------------------------------- | ----------------------------------------------------------------- |
+| `simu_dip_reconstruction.ipynb`    | 2D DIP reconstruction from simulated sinogram                     |
+| `simu_supervised_restoration.ipynb`| U-Net training and restoration of simulated SIRT reconstructions  |
+| `simu_dipm_reconstruction.ipynb`   | Multi-channel DIPm-TV reconstruction (simulated data)             |
+| `exp_dip_reconstruction.ipynb`     | 2D DIP reconstruction from experimental data                      |
+| `exp_supervised_restoration.ipynb` | U-Net supervised restoration of experimental SIRT reconstructions |
+| `EDX_DIPm-TV.ipynb`                | Multi-channel DIPm-TV reconstruction (experimental EDX data)      |
+| `EELS_DIPm-TV.ipynb`               | Multi-channel DIPm-TV reconstruction (experimental EELS data)     |
+| `psd_resolution_notebook.ipynb`    | Resolution estimation via power spectral density                  |
+
+### Data and pretrained models
+
+- **Datasets**: will be released via Zenodo
+- **Pretrained models**: available in `Trained_models/`
+
+---
+
+## Key Features
+
+- End-to-end pipeline: reconstruction and restoration
+- Unsupervised learning — no ground truth required
+- Multi-channel tomography support (EDX / EELS)
+- Designed for low-dose, sparse, and limited-angle data
+- Fully reproducible via Jupyter notebooks
+
+---
+
+## Roadmap
+
+- [ ] Zenodo dataset release
+- [ ] Benchmarks against recent DL methods
+
+---
+
+## License
+
+MIT
+
+## Citation
+
+If you use this repository, please cite the associated papers listed above.

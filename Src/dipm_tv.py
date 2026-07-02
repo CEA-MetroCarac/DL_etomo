@@ -21,6 +21,7 @@ from pathlib import Path
 
 import torch
 from torch import nn
+import torch.nn.functional as F
 from einops import rearrange
 import tifffile as tiff
 import matplotlib.pyplot as plt
@@ -54,7 +55,8 @@ class UB3D(nn.Module):
     def __init__(self, in_chan, out_chan, skip_chan, kernel=3,
                  up_mode='trilinear', pad_mode='zero'):
         super().__init__()
-        self.up = nn.Upsample(scale_factor=2, mode=up_mode)
+        self.up_kwargs = (dict(mode=up_mode) if up_mode == 'nearest'
+                          else dict(mode=up_mode, align_corners=False))
         self.convblock = nn.Sequential(
             nn.BatchNorm3d(in_chan + skip_chan),
             nn.Conv3d(in_chan + skip_chan, out_chan, kernel_size=kernel,
@@ -67,9 +69,11 @@ class UB3D(nn.Module):
         )
 
     def forward(self, x, skip):
-        x = self.up(x)
         if skip is not None:
+            x = F.interpolate(x, size=skip.shape[2:], **self.up_kwargs)
             x = torch.cat((x, skip), dim=1)
+        else:
+            x = F.interpolate(x, scale_factor=2, **self.up_kwargs)
         return self.convblock(x)
 
 class CNN3D(nn.Module):
@@ -204,11 +208,28 @@ def compute_tv_3d(x, beta=0.5):
 # ---------------------------------------------------------------------------
 def preprocess_sinograms(data, theta, device='cuda'):
     """
-    data : np.ndarray  (N_ch, N_angles, H, W)  or  (N_angles, H, W) for single channel
-    theta : list of float  tilt angles in degrees
-    device : str  torch device
+    Normalise sinogram data per channel to [0, 1] and convert to a torch tensor.
 
-    Returns sino_torch, x_min, x_max
+    Parameters
+    ----------
+    data : np.ndarray, shape (N_ch, N_angles, H, W) or (N_angles, H, W)
+        Raw sinogram data.  Single-channel input is expanded to (1, N_angles, H, W).
+        Negative values are clamped to zero.
+    theta : list of float
+        Tilt angles in degrees (used only to document the angular convention;
+        no arithmetic is performed here).
+    device : str
+        PyTorch device string.
+
+    Returns
+    -------
+    sino_torch : torch.Tensor, shape (N_ch, H, N_angles, W)
+        Normalised sinogram in (channel, depth, angle, detector) order,
+        ready to be passed to ``run_dipm_tv``.
+    x_min : np.ndarray, shape (N_ch,)
+        Per-channel minimum used for normalisation.
+    x_max : np.ndarray, shape (N_ch,)
+        Per-channel maximum used for normalisation.
     """
     data = data.astype(np.float32)
     if data.ndim == 3:
@@ -229,6 +250,7 @@ def preprocess_sinograms(data, theta, device='cuda'):
     return sino_torch, x_min, x_max
 
 def _norm(x):
+    """Normalize a numpy array to [0, 1] for display purposes."""
     mn, mx = x.min(), x.max()
     return (x - mn) / (mx - mn + 1e-9)
 
@@ -300,6 +322,13 @@ def run_dipm_tv(net, rad_op, sino_torch,
     # --- Fixed random input noise ---
     net_input_orig = (torch.zeros(1, input_depth, depth, img_size, img_size).uniform_()
                       * std_inp_noise).to(device)
+
+    # --- Network info ---
+    n_params = sum(p.numel() for p in net.parameters())
+    vol_size = nbr * depth * img_size * img_size
+    print(f'Output / Input img size : {net_input_orig.shape}')
+    print(f'network parameters: {n_params:_}')
+    print(f'image size : {vol_size:_}')
 
     # --- State ---
     loss_values = []
@@ -410,37 +439,37 @@ def save_results(iter_output, phase_names, out_dir,
                  sample='', lambda_tv=0.0, lr=5e-4,
                  noise_reg=0.05, loss_type='L2'):
     """
-    Save one iteration of the DIP reconstruction as separate TIFF files.
+    Save one iteration of the DIP reconstruction as separate TIFF files
 
     Parameters
     ----------
-    iter_output : list of np.ndarray  (from run_dipm_tv)
+    iter_output : list of (int, np.ndarray)  returned by run_dipm_tv
     phase_names : list of str  e.g. ['Ge', 'Te', 'Sb']
     out_dir : str or Path
-    iteration : int  which iteration to save (default: last)
+    iteration : int  which iteration to save (default: last); nearest stored is used if exact not found
     x_min, x_max : np.ndarray or None  if provided, denormalises the output
     sample, lambda_tv, lr, noise_reg, loss_type : metadata for filename
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # iter_output is a list of (it_index, array) tuples
-    if iteration is None:
-        iteration = iter_output[-1][0]
-
-    match = next((arr for it_idx, arr in iter_output if it_idx == iteration), None)
-    if match is None:
-        # fallback: take the closest stored iteration
-        match = min(iter_output, key=lambda x: abs(x[0] - iteration))[1]
-    vol = match   # (N_ch, D, H, W)
+    it_idx, vol = iter_output[-1] if iteration is None else min(
+        iter_output, key=lambda x: abs(x[0] - iteration)
+    )
 
     for i, name in enumerate(phase_names):
-        ch = vol[i].astype(np.float32)
+        ch = np.squeeze(vol[i]).astype(np.float32)   #(1, Z, Y, X) -> (Z, Y, X)
+
+        if ch.ndim != 3:
+            raise ValueError(f'{name}: expected a 3D volume, got shape={ch.shape}')
+
         if x_min is not None and x_max is not None:
             ch = ch * (x_max[i] - x_min[i]) + x_min[i]
-        fname = out_dir / (
-            f'dipm_TV_{sample}_{name}_{lambda_tv}_{iteration}'
-            f'_{lr}_{noise_reg}_{loss_type}.tif'
-        )
-        tiff.imwrite(str(fname), ch, imagej=True)
-        print(f'Saved: {fname}')
+
+        fname = out_dir / (f'DIP_recon_{sample}_{name}_it{it_idx}'
+                           f'_tv{lambda_tv}_lr{lr}_nr{noise_reg}_{loss_type}.tif')
+
+        tiff.imwrite(str(fname), ch, imagej=True,
+                     metadata={'axes': 'ZYX'})
+
+        print(f'Saved: {fname}  shape(Z,Y,X)={ch.shape}')
