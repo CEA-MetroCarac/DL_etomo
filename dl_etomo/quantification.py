@@ -4,7 +4,7 @@ quantification.py
 Cliff-Lorimer quantification for EDX tomography volumes.
 
 Implements the classic (hyperspy-style) Cliff-Lorimer formula using direct
-intensity ratios.  K-factors come from kfactors_db.py (same Src/ folder).
+intensity ratios.  K-factors come from kfactors_db.py (same dl_etomo/ package).
 
 Public API
 ----------
@@ -14,11 +14,21 @@ quantify_cl_vol(intensities, xray_lines,
 
 Intensities must be in **physical units** (denormalized) before calling
 quantify_cl_vol.  Normalized [0, 1] data will give wrong ratios.
+
+Cliff-Lorimer is a strictly *linear* intensity-ratio law
+(C_A/C_B = k_AB * I_A/I_B) -- quantifying directly on log-transformed
+counts would silently give wrong compositions, not just noisier ones.
+What low-count data (e.g. denoised trace-element maps) needs instead is
+numerically *robust* ratio arithmetic: quantify_cl_vol computes each
+per-pixel intensity ratio in log-domain (log_stable=True, the default)
+-- i.e. exp(log(a) - log(b)) instead of a/b -- which is the exact same
+ratio but immune to inf/nan when a channel's intensity is exactly or
+nearly zero.
 """
 
 import numpy as np
 from functools import reduce
-from kfactors_db import k_factors, atomic_weights as _atomic_weights
+from .kfactors_db import k_factors, atomic_weights as _atomic_weights
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +91,7 @@ def get_kfactor_from_line(xray_line):
 # ---------------------------------------------------------------------------
 
 def _quantification_cliff_lorimer(intensities, kfactors_arr, absorption_correction,
-                                   ref_index=0, ref_index2=1):
+                                   ref_index=0, ref_index2=1, log_stable=True, eps=1e-12):
     """
     Cliff-Lorimer quantification for a single pixel/voxel (direct-ratio version).
 
@@ -91,6 +101,15 @@ def _quantification_cliff_lorimer(intensities, kfactors_arr, absorption_correcti
     kfactors_arr : (E,) array
     absorption_correction : (E,) array  values in (0, 1]
     ref_index, ref_index2 : int
+    log_stable : bool
+        ab[i] = (Ia*Aa*Ka) / (Ii*Ai*Ki) is the same ratio whether computed as
+        a direct division or as exp(log(num) - log(den)).  The log-domain form
+        (default) is used here because it stays finite (no inf/nan) when a
+        channel's absorption-corrected intensity is exactly or near zero --
+        common in low-count / denoised EDX maps.  Set False for plain division.
+    eps : float
+        Numerical floor added before taking logs; keep far below the smallest
+        physically meaningful intensity in the data.
 
     Returns
     -------
@@ -107,13 +126,15 @@ def _quantification_cliff_lorimer(intensities, kfactors_arr, absorption_correcti
     other_index = list(range(len(kfactors_arr)))
     other_index.pop(ref_index)
 
-    # ab[i] = (Ia * Aa) / (Ii * Ai)  *  (Ka / Ki)
+    num = intensities[ref_index] * absorption_correction[ref_index] * kfactors_arr[ref_index]
+
+    # ab[i] = (Ia * Aa * Ka) / (Ii * Ai * Ki)
     for i in other_index:
-        ab[i] = (
-            (intensities[ref_index] * absorption_correction[ref_index])
-            / (intensities[i]       * absorption_correction[i])
-            * (kfactors_arr[ref_index] / kfactors_arr[i])
-        )
+        den = intensities[i] * absorption_correction[i] * kfactors_arr[i]
+        if log_stable:
+            ab[i] = np.exp(np.log(num + eps) - np.log(den + eps))
+        else:
+            ab[i] = num / den
 
     # Ca = ab_b / (1 + ab_b + ab_b/ab_c + ...)
     for i in other_index:
@@ -136,7 +157,7 @@ def _quantification_cliff_lorimer(intensities, kfactors_arr, absorption_correcti
 # ---------------------------------------------------------------------------
 
 def quantify_cl_vol(intensities_list, xray_lines, absorption=None, min_intensity=0.1,
-                    mask=None, auto_mask=False):
+                    mask=None, auto_mask=False, log_stable=True, eps=1e-12):
     """
     Cliff-Lorimer quantification on ND intensity maps.
 
@@ -153,7 +174,8 @@ def quantify_cl_vol(intensities_list, xray_lines, absorption=None, min_intensity
     min_intensity : float
         Pixels/voxels where all channels are below this threshold are set to
         zero composition.  The two channels with the strongest signal above
-        the threshold are used as CL reference indices.
+        the threshold are used as CL reference indices.  Must be expressed in
+        the same physical units as intensities_list (e.g. accumulated counts).
     mask : array-like, shape (*S) or None
         Boolean or float mask applied to every channel before quantification.
         True/1 → keep voxel, False/0 → zero out (background).
@@ -161,6 +183,13 @@ def quantify_cl_vol(intensities_list, xray_lines, absorption=None, min_intensity
     auto_mask : bool
         If True and mask is None, compute a binary Otsu mask on the sum of
         all intensity channels (same as the reference pruebas workflow).
+    log_stable : bool
+        Compute the per-pixel Cliff-Lorimer intensity ratios in log-domain
+        (default True).  Same physics/result as direct division, but immune
+        to inf/nan when a channel's intensity is exactly or near zero --
+        the regime low-count / denoised EDX maps often sit in.
+    eps : float
+        Numerical floor for the log-domain ratio (only used if log_stable).
 
     Returns
     -------
@@ -216,7 +245,7 @@ def quantify_cl_vol(intensities_list, xray_lines, absorption=None, min_intensity
             ref_index, ref_index2 = int(idx[0]), int(idx[1])
             intens[:, i] = _quantification_cliff_lorimer(
                 intens[:, i], kfactors_arr, absorb[:, i],
-                ref_index, ref_index2,
+                ref_index, ref_index2, log_stable=log_stable, eps=eps,
             )
         else:
             intens[:, i] = np.zeros(E)

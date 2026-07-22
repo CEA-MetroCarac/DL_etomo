@@ -24,9 +24,9 @@ import torch
 from torch import nn
 from einops import rearrange
 
-from model import model_unet  # noqa: F401 — re-exported for notebook convenience
-from radon import Radon2D
-from utils import simplify, sinoToFullView, get_torch_grad_op, compute_sparse_tv
+from .model import model_unet  # noqa: F401 — re-exported for notebook convenience
+from .radon import Radon2D
+from .utils import simplify, sinoToFullView, get_torch_grad_op, compute_sparse_tv
 
 
 def dip_reconstruction(

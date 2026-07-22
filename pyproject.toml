@@ -1,0 +1,54 @@
+[project]
+name = "dl-etomo"
+version = "0.1.0"
+description = "Deep learning strategies for electron tomography: DIP, DIPm-TV, CS-TV, and Cliff-Lorimer EDX quantification."
+authors = [
+    { name = "Daniel del Pozo Bueno", email = "dpb.235@gmail.com" },
+]
+license = { text = "GPL-3.0-or-later" }
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: GPU :: NVIDIA CUDA",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
+
+# Core dependencies actually imported unconditionally by dl_etomo/*.py.
+# tomosipo has no reliable PyPI release; install it via conda-forge first
+# (see README) -- pip will then see it already satisfied in the environment.
+dependencies = [
+    "numpy",
+    "torch",
+    "tqdm",
+    "matplotlib",
+    "einops",
+    "tifffile",
+    "ipython",
+    "scipy",
+    "scikit-image",
+    "tomosipo",
+]
+
+[project.optional-dependencies]
+# Only cs_tv.py needs this heavier, harder-to-install stack -- kept out of
+# the base install, same "push optional backends into extras" rule used by
+# scitomo's pyproject.toml.
+cs-tv = [
+    "pysap-etomo",
+    "modopt",
+]
+
+[project.scripts]
+dl-etomo = "dl_etomo.__main__:main"
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["dl_etomo*"]

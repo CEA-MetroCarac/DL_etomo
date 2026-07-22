@@ -10,8 +10,8 @@ Contains:
   - Data pre-processing helper: preprocess_sinograms()
   - Result saving helper: save_results()
  
-How to import from notebook:
-    from dipm_tv import CNN3D, run_dipm_tv, preprocess_sinograms, save_results
+How to import:
+    from dl_etomo.dipm_tv import CNN3D, run_dipm_tv, preprocess_sinograms, save_results
 """
 
 import numpy as np
@@ -25,7 +25,7 @@ import torch.nn.functional as F
 from einops import rearrange
 import tifffile as tiff
 import matplotlib.pyplot as plt
-from IPython import display
+from IPython import display, get_ipython
 from tqdm import tqdm
 
 # ---------------------------------------------------------------------------
@@ -294,7 +294,9 @@ def run_dipm_tv(net, rad_op, sino_torch,
     loss_type : 'L1' or 'L2'
     std_inp_noise : float  scale of the fixed uniform input (default 1.0; use 0.1 for EDX)
     weight_decay : float  AdamW weight decay (default 0.0)
-    plot_every : int  refresh live plot every N iterations
+    plot_every : int  refresh live plot every N iterations; set to 0 to
+        disable (also auto-disabled outside a Jupyter/IPython kernel, e.g.
+        when running headlessly from the CLI)
     plot_slice : int  index along plot_axis used in the live preview
     plot_axis : int  volume axis to slice for preview (0=D, 1=H, 2=W)
     save_every : int  store output every N iterations (reduces CPU RAM)
@@ -342,15 +344,18 @@ def run_dipm_tv(net, rad_op, sino_torch,
         2: lambda v, s: v[:, :, :, s],    # slice along W
     }[plot_axis]
 
-    # --- Live plot ---
-    fig, ax = plt.subplots(1, 3, figsize=(18, 5))
-    dh = display.display(fig, display_id=True)
-    ax[0].set_yscale('log')
+    # --- Live plot (only inside a Jupyter/IPython kernel; skipped headlessly) ---
+    live_plot = plot_every > 0 and get_ipython() is not None
+    if live_plot:
+        fig, ax = plt.subplots(1, 3, figsize=(18, 5))
+        dh = display.display(fig, display_id=True)
+        ax[0].set_yscale('log')
 
     net.train()
     start = time.time()
 
-    for it in tqdm(range(num_iter), desc='DIP-MTV'):
+    pbar = tqdm(range(num_iter), desc='DIP-MTV')
+    for it in pbar:
         optimizer.zero_grad(set_to_none=True)
 
         if noise_reg > 0:
@@ -384,9 +389,10 @@ def run_dipm_tv(net, rad_op, sino_torch,
 
         loss_val = total_loss.item()
         loss_values.append(loss_val)
+        pbar.set_postfix(loss=f'{loss_val:.4g}')
 
         # --- Live preview ---
-        if (it + 1) % plot_every == 0:
+        if live_plot and (it + 1) % plot_every == 0:
             with torch.no_grad():
                 vol = out[0].detach().float().cpu().numpy()
 
@@ -425,7 +431,8 @@ def run_dipm_tv(net, rad_op, sino_torch,
         if (it + 1) % 100 == 0 and device_type == 'cuda':
             torch.cuda.empty_cache()
 
-    plt.close(fig)
+    if live_plot:
+        plt.close(fig)
     elapsed = time.time() - start
     print(f'Total time: {datetime.timedelta(seconds=elapsed)}')
 

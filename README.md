@@ -73,7 +73,16 @@ conda env create -f environment.yml
 conda activate dl_etomo
 ```
 
-Open any notebook in `Notebooks/` and run.
+Then install `dl_etomo` itself as an editable package into that environment:
+
+```bash
+pip install -e .
+# or, to also pull the classical CS-TV baseline's heavier dependencies:
+pip install -e ".[cs-tv]"
+```
+
+Open any notebook in `Notebooks/` and run, or use the command-line interface
+described below.
 
 > **CUDA note:** `astra-toolbox` is compiled for CUDA 11.8 (conda-forge). The PyTorch `cu118` wheel is backward-compatible with CUDA 12.x drivers (≥ 452.39).
 
@@ -100,18 +109,27 @@ Open any notebook in `Notebooks/` and run.
 
 ## Usage
 
-Core source modules are in `Src/`. Notebooks in `Notebooks/Simulated/` and `Notebooks/Experimental/` provide ready-to-run examples.
+Core source modules are in `dl_etomo/` (an installable package — see
+[Installation](#installation)). Notebooks in `Notebooks/Simulated/` and
+`Notebooks/Experimental/` provide ready-to-run examples; the same
+functionality is also available from the command line (see
+[Command-line usage](#command-line-usage) below).
 
 ### Source modules
 
-| File                | Description                                                         |
-| ------------------- | ------------------------------------------------------------------- |
-| `dip.py`            | 2D DIP training loop with live notebook visualization               |
-| `dipm_tv.py`        | 3D multi-channel DIPm-TV: CNN3D architecture, TV loss, training loop |
-| `model.py`          | 2D U-Net for supervised restoration                                 |
-| `radon.py`          | 2D/3D Radon forward/backprojection and SIRT operators (Tomosipo)    |
-| `utils.py`          | Normalization, sinogram utilities, MS-SSIM loss                     |
-| `psd_resolution.py` | 3D PSD computation, Lorentzian fitting, resolution estimation        |
+| File                 | Description                                                          |
+| -------------------- | --------------------------------------------------------------------- |
+| `dip.py`             | 2D DIP training loop with optional live notebook visualization        |
+| `dipm_tv.py`         | 3D multi-channel DIPm-TV: CNN3D architecture, TV loss, training loop   |
+| `cs_tv.py`           | Classical CS-TV baseline (Condat-Vu primal-dual, `cs-tv` extra)        |
+| `model.py`           | 2D U-Net for supervised restoration                                   |
+| `radon.py`           | 2D/3D Radon forward/backprojection and SIRT operators (Tomosipo)      |
+| `utils.py`           | Normalization, sinogram utilities, MS-SSIM loss                       |
+| `psd_resolution.py`  | 3D PSD computation, Lorentzian fitting, resolution estimation         |
+| `quantification.py`  | Cliff-Lorimer EDX quantification                                     |
+| `kfactors_db.py`     | K-factor / atomic weight reference tables used by `quantification.py` |
+| `dataio.py`          | Tilt-series loader supporting both this repo's own data layout and the `pfnc-gst-haadf-stem-eds-tomography` HuggingFace dataset layout |
+| `cli/`               | Argparse command-line entry points, one module per subcommand         |
 
 ### Notebooks
 
@@ -130,6 +148,63 @@ Core source modules are in `Src/`. Notebooks in `Notebooks/Simulated/` and `Note
 
 - **Datasets**: will be released via Zenodo
 - **Pretrained models**: available in `Trained_models/`
+
+---
+
+## Command-line usage
+
+After `pip install -e .`, every method is also runnable as a script, without
+Jupyter:
+
+```bash
+python -m dl_etomo <subcommand> [flags]
+# or, equivalently, once installed:
+dl-etomo <subcommand> [flags]
+```
+
+Run `dl-etomo --help` for the full subcommand list, or `dl-etomo
+<subcommand> --help` for a given subcommand's flags. Every numeric
+hyperparameter flag mirrors the corresponding notebook parameter (e.g.
+`--num-iter`, `--lr`, `--noise-reg`, `--lambda-tv`); an optional `--config
+run.json` can override any of them from a JSON file, useful for saving and
+reproducing a full run configuration.
+
+| Subcommand         | Wraps                                              |
+| ------------------- | -------------------------------------------------- |
+| `dipm-tv`           | `dipm_tv.run_dipm_tv` — flagship 3D multi-channel DIPm-TV reconstruction |
+| `dip-tv`            | `dip.dip_reconstruction` — 2D single-channel DIP    |
+| `cs-tv`             | `cs_tv.compress_sensing[_2d]` — classical CS-TV baseline (`cs-tv` extra) |
+| `quantify`          | `quantification.quantify_cl_vol` — Cliff-Lorimer EDX quantification |
+| `psd-resolution`    | `psd_resolution.compute_psd_analysis` + `fit_lorentz_cutoff` |
+
+`dipm-tv` accepts data in either of two layouts via `--dataset-format
+{auto,native,hf}` (auto-detected by default):
+
+- **native** — this repo's own `Data/EDX_data`/`Data/EELS_data` style:
+  per-element `*_proj.tif` stacks plus a separate `--angles-file`
+  (e.g. `Data/Angles/angles_2.txt`).
+- **hf** — the `pfnc-gst-haadf-stem-eds-tomography-b2-d3` HuggingFace
+  dataset layout, used unmodified: `derived/edx/elemental_tilt_series/*_stack.tif`
+  plus `metadata/angles_deg.txt`, both under the dataset root passed as
+  `--input-dir`.
+
+Example, reconstructing this repo's own EDX data headlessly:
+
+```bash
+dl-etomo dipm-tv \
+    --input-dir Data/EDX_data --dataset-format native --prefix SET \
+    --angles-file Data/Angles/angles_2.txt \
+    --num-iter 1500 --lr 5e-4 --noise-reg 0.05 --lambda-tv 1e-11 \
+    --output-dir Data/EDX_results/SET
+```
+
+Same command against a local copy of the HuggingFace dataset:
+
+```bash
+dl-etomo dipm-tv \
+    --input-dir /path/to/pfnc-gst-haadf-stem-eds-tomography-b2-d3 \
+    --output-dir out/pfnc_dipmtv
+```
 
 ---
 
@@ -152,7 +227,7 @@ Core source modules are in `Src/`. Notebooks in `Notebooks/Simulated/` and `Note
 
 ## License
 
-MIT
+GPL-3.0. See [LICENSE](LICENSE).
 
 ## Citation
 
