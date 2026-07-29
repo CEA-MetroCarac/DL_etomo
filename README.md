@@ -6,13 +6,13 @@
 
 ## Overview
 
-Electron tomography in real experimental conditions faces fundamental challenges:
+Electron tomography under real experimental conditions faces several fundamental challenges:
 
 - **Limited-angle acquisition** — missing wedge artifacts
 - **Sparse projections** — undersampled angular coverage
 - **Low dose / noisy data** — poor signal-to-noise ratio
 
-Classical methods (SIRT, CS-TV) struggle in these regimes. This repository provides practical, reproducible solutions based on **Deep Image Prior (DIP)** and its multi-channel extension (**DIPm-TV**), requiring no labelled training data.
+Classical reconstruction methods such as SIRT and CS-TV may exhibit severe missing-wedge and noise artifacts in these regimes. This repository provides practical and reproducible solutions based on **Deep Image Prior (DIP)** and its multi-channel extension, **DIPm-TV**, which require no labeled training data.
 
 ---
 
@@ -23,42 +23,42 @@ Classical methods (SIRT, CS-TV) struggle in these regimes. This repository provi
 - CS-TV
 
 ### Supervised deep learning
-- **U-Net** restoration of SIRT reconstructions
+- **U-Net** — supervised restoration of SIRT reconstructions
 
 ### Unsupervised deep learning
-- **DIP-TV** — Deep Image Prior with Total Variation regularization
-- **DIPm-TV** — Multi-channel extension for joint reconstruction of correlated volumes (EDX / EELS channels)
+- **DIP-TV** — single-channel Deep Image Prior with Total Variation regularization
+- **DIPm-TV** — multi-channel extension for the joint reconstruction of correlated EDX or EELS volumes
 
 ---
 
 ## Applications
 
-Validated on multiple challenging scenarios:
+The methods have been validated on several challenging scenarios:
 
 - **Simulated nanoparticle datasets** — 2D reconstructions across three acquisition regimes:
-  - -60°:2°:+60° (63 projections, limited-angle)
-  - -60°:10°:+60° (13 projections, sparse)
-  - -30°:2°:+30° (31 projections, limited-angle + narrow range)
+  - −60° to +60° in 2° increments (62 projections, limited-angle)
+  - −60° to +60° in 10° increments (13 projections, sparse-view)
+  - −30° to +30° in 2° increments (32 projections, limited-angle with a narrow angular range)
 - **Simulated multi-channel phantoms** — EDX and EELS channel phantoms for DIPm-TV validation
-- **Experimental 3D tilt-series** — Platinum nanoparticles (-60°:2°:+60°, 63 projections)
+- **Experimental 3D tilt-series** — Platinum nanoparticles (-60°:2°:+60°, 62 projections)
 - **Experimental STEM-EDX tomography** — Phase-change memory (PCM) devices, Ti/Ge/Sb/Te channels (16 projections, ±40°)
-- **Experimental EELS tomography** — Core-loss iron-oxide mapping, Fe²⁺/Fe³⁺ channels (9 projections, ±70°)
+- **Experimental EELS tomography** — Core-loss iron-oxide mapping with Fe²⁺/Fe³⁺ channels (9 projections, ±70°)
 
 ---
 
 ## Associated Publications
 
-- **Unsupervised Deep Image Prior for Sparse-View and Limited-Angle Electron Tomography**  
-  S. Brosset, D. del Pozo Bueno, T. David, L. Guetaz, P. Ciuciu, Z. Saghi  
-  https://arxiv.org/abs/2605.27139
+* **Unsupervised Deep Image Prior for Sparse-View and Limited-Angle Electron Tomography**
+  S. Brosset, D. del Pozo Bueno, T. David, L. Guetaz, P. Ciuciu, and Z. Saghi
+  [Published article in *Ultramicroscopy*](https://www.sciencedirect.com/science/article/pii/S0304399126001063) · [arXiv preprint](https://arxiv.org/abs/2605.27139)
 
-- **Unsupervised Deep Learning for Limited-Angle STEM-EDX Tomography — Application to 3D Chemical Analysis of Phase-Change Memory Devices**  
-  D. del Pozo Bueno, S. Brosset, T. Monniez, G. Navarro, P. Ciuciu, Z. Saghi  
-  https://arxiv.org/abs/2606.10547
+* **Unsupervised Deep Learning for Limited-Angle STEM-EDX Tomography — Application to 3D Chemical Analysis of Phase-Change Memory Devices**
+  D. del Pozo Bueno, S. Brosset, T. Monniez, G. Navarro, P. Ciuciu, and Z. Saghi
+  [arXiv preprint](https://arxiv.org/abs/2606.10547)
 
-- **Low-Dose 3D Bonding Mapping Through "Soft" Core-Loss EELS Tomography and Unsupervised Deep Learning**  
-  M. Pelaez-Fernandez, D. del Pozo Bueno, A. Teurtrie, S. Brosset, M. Marinova, P. Ciuciu, M. Estrader, G. Salazar-Alvarez, F. Peiró, R. Arenal, S. Estradé, Z. Saghi, F. De la Peña  
-  https://arxiv.org/abs/2606.10893
+* **Low-Dose 3D Bonding Mapping Through "Soft" Core-Loss EELS Tomography and Unsupervised Deep Learning**
+  M. Pelaez-Fernandez, D. del-Pozo-Bueno, A. Teurtrie, S. Brosset, M. Marinova, P. Ciuciu, M. Estrader, G. Salazar-Alvarez, F. Peiró, R. Arenal, S. Estradé, Z. Saghi, and F. De la Peña
+  [arXiv preprint](https://arxiv.org/abs/2606.10893)
 
 ---
 
@@ -69,17 +69,25 @@ Validated on multiple challenging scenarios:
 ```bash
 git clone https://github.com/CEA-MetroCarac/DL_etomo.git
 cd DL_etomo
+```
+
+If you don't already have a working environment with the dependencies below,
+create one (optional — skip this if you already have one):
+
+```bash
 conda env create -f environment.yml
 conda activate dl_etomo
 ```
 
-Then install `dl_etomo` itself as an editable package into that environment:
+Then install `dl_etomo` itself into that environment:
 
 ```bash
-pip install -e .
-# or, to also pull the classical CS-TV baseline's heavier dependencies:
-pip install -e ".[cs-tv]"
+pip install .
 ```
+
+> This installs a real copy of `dl_etomo` into your environment's
+> `site-packages`. If you plan to actively edit the source and want changes
+> picked up without reinstalling, use `pip install -e .` instead.
 
 Open any notebook in `Notebooks/` and run, or use the command-line interface
 described below.
@@ -88,22 +96,22 @@ described below.
 
 ### Requirements
 
-| Package        | Version      | Install via         |
-| -------------- | ------------ | ------------------- |
-| Python         | ≥ 3.12       | conda               |
-| PyTorch (CUDA) | ≥ 2.4        | pip (cu118 wheel)   |
-| astra-toolbox  | = 2.2.0      | conda-forge         |
-| tomosipo       | ≥ 0.6.0      | conda-forge         |
-| numpy          | ≥ 2.0        | conda-forge         |
-| scipy          | ≥ 1.15       | conda-forge         |
-| matplotlib     | ≥ 3.10       | conda-forge         |
-| scikit-image   | ≥ 0.25       | conda-forge         |
-| tifffile       | ≥ 2024.1.1   | conda-forge         |
-| tqdm           | ≥ 4.67       | conda-forge         |
-| jupyterlab     | ≥ 4.3        | conda-forge         |
-| einops         | ≥ 0.8        | pip                 |
+The versions below should remain consistent with `environment.yml` and `pyproject.toml`.
 
-> **NumPy 2.x required.** The codebase uses `np.inf` (lowercase), which replaced the removed `np.Inf` alias in NumPy 2.0.
+| Package | Version | Install via |
+| --- | --- | --- |
+| Python | 3.12 | conda |
+| PyTorch (CUDA) | ≥ 2.4, CUDA 11.8 build | pip |
+| astra-toolbox | 2.2.0 | conda-forge |
+| tomosipo | ≥ 0.6.0 | conda-forge |
+| numpy | ≥ 2.0 | conda-forge |
+| scipy | ≥ 1.15 | conda-forge |
+| matplotlib | ≥ 3.10 | conda-forge |
+| scikit-image | ≥ 0.25 | conda-forge |
+| tifffile | ≥ 2024.1.1 | conda-forge |
+| tqdm | ≥ 4.67 | conda-forge |
+| jupyterlab | ≥ 4.3 | conda-forge |
+| einops | ≥ 0.8 | pip |
 
 ---
 
@@ -114,22 +122,6 @@ Core source modules are in `dl_etomo/` (an installable package — see
 `Notebooks/Experimental/` provide ready-to-run examples; the same
 functionality is also available from the command line (see
 [Command-line usage](#command-line-usage) below).
-
-### Source modules
-
-| File                 | Description                                                          |
-| -------------------- | --------------------------------------------------------------------- |
-| `dip.py`             | 2D DIP training loop with optional live notebook visualization        |
-| `dipm_tv.py`         | 3D multi-channel DIPm-TV: CNN3D architecture, TV loss, training loop   |
-| `cs_tv.py`           | Classical CS-TV baseline (Condat-Vu primal-dual, `cs-tv` extra)        |
-| `model.py`           | 2D U-Net for supervised restoration                                   |
-| `radon.py`           | 2D/3D Radon forward/backprojection and SIRT operators (Tomosipo)      |
-| `utils.py`           | Normalization, sinogram utilities, MS-SSIM loss                       |
-| `psd_resolution.py`  | 3D PSD computation, Lorentzian fitting, resolution estimation         |
-| `quantification.py`  | Cliff-Lorimer EDX quantification                                     |
-| `kfactors_db.py`     | K-factor / atomic weight reference tables used by `quantification.py` |
-| `dataio.py`          | Tilt-series loader supporting both this repo's own data layout and the `pfnc-gst-haadf-stem-eds-tomography` HuggingFace dataset layout |
-| `cli/`               | Argparse command-line entry points, one module per subcommand         |
 
 ### Notebooks
 
@@ -142,11 +134,13 @@ functionality is also available from the command line (see
 | `exp_supervised_restoration.ipynb` | U-Net supervised restoration of experimental SIRT reconstructions |
 | `EDX_DIPm-TV.ipynb`                | Multi-channel DIPm-TV reconstruction (experimental EDX data)      |
 | `EELS_DIPm-TV.ipynb`               | Multi-channel DIPm-TV reconstruction (experimental EELS data)     |
+| `CS_TV_reconstruction.ipynb`       | Classical CS-TV (Condat-Vu primal-dual) baseline reconstruction   |
+| `Quantification_CL.ipynb`          | Cliff-Lorimer quantification of reconstructed EDX volumes         |
 | `psd_resolution_notebook.ipynb`    | Resolution estimation via power spectral density                  |
 
 ### Data and pretrained models
 
-- **Datasets**: will be released via Zenodo
+- **Datasets**: available in `Data/`
 - **Pretrained models**: available in `Trained_models/`
 
 ---
@@ -208,27 +202,42 @@ dl-etomo dipm-tv \
 
 ---
 
-## Key Features
-
-- End-to-end pipeline: reconstruction and restoration
-- Unsupervised learning — no ground truth required
-- Multi-channel tomography support (EDX / EELS)
-- Designed for low-dose, sparse, and limited-angle data
-- Fully reproducible via Jupyter notebooks
-
----
-
-## Roadmap
-
-- [ ] Zenodo dataset release
-- [ ] Benchmarks against recent DL methods
-
----
-
 ## License
 
-GPL-3.0. See [LICENSE](LICENSE).
+The source code in this repository is licensed under the **GNU General Public License v3.0 or later** (`GPL-3.0-or-later`). See [`LICENSE`](LICENSE) for the complete license text.
+
+Datasets and pretrained models may be subject to separate licenses. Consult their corresponding documentation before redistribution or reuse. In particular, the external PFNC GST STEM-EDS dataset is distributed under the [CC BY-NC-ND 4.0 license](https://creativecommons.org/licenses/by-nc-nd/4.0/).
 
 ## Citation
 
-If you use this repository, please cite the associated papers listed above.
+If you use this repository, please cite the following works.
+
+### Deep Image Prior for electron tomography
+
+```bibtex
+@article{brosset2026dip_etomo,
+  title   = {Unsupervised Deep Image Prior for Sparse-View and Limited-Angle Electron Tomography},
+  author  = {Brosset, Serge and del Pozo Bueno, Daniel and David, Thomas and Guetaz, Laure and Ciuciu, Philippe and Saghi, Zineb},
+  journal = {Ultramicroscopy},
+  volume  = {285},
+  pages   = {114414},
+  year    = {2026},
+  doi     = {10.1016/j.ultramic.2026.114414},
+  url     = {https://doi.org/10.1016/j.ultramic.2026.114414}
+}
+```
+
+### Multi-channel DIPm-TV for STEM-EDX tomography
+
+```bibtex
+@misc{delpozobueno2026dipmtv_edx,
+  title         = {Unsupervised Deep Learning for Limited-Angle {STEM-EDX} Tomography: Application to 3D Chemical Analysis of Phase-Change Memory Devices},
+  author        = {del Pozo Bueno, Daniel and Brosset, Serge and Monniez, Theo and Navarro, Gabriele and Ciuciu, Philippe and Saghi, Zineb},
+  year          = {2026},
+  eprint        = {2606.10547},
+  archivePrefix = {arXiv},
+  primaryClass  = {eess.IV},
+  doi           = {10.48550/arXiv.2606.10547},
+  url           = {https://arxiv.org/abs/2606.10547}
+}
+```
